@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RAG Chat App</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <!-- Markdown レンダリング用のライブラリ -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>CMP Chat App</h1>
+            <p>Vertex AI RAGを使用したチャットアプリ</p>
+        </header>
+        
+        <div class="chat-container">
+            <div class="chat-messages" id="chatMessages">
+                <div class="message bot-message">
+                    <div class="message-content">
+                        こんにちは！何でもお聞きください。
+                    </div>
+                </div>
+            </div>
+            
+            <div class="chat-input-container">
+                <div class="mode-toggle">
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="deepModeToggle">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">深掘りモード</span>
+                    </label>
+                </div>
+                <div class="chat-input">
+                    <input type="text" id="messageInput" placeholder="メッセージを入力してください..." />
+                    <button id="sendButton">送信</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const chatMessages = document.getElementById('chatMessages');
+        const messageInput = document.getElementById('messageInput');
+        const sendButton = document.getElementById('sendButton');
+
+        // Markdownの設定
+        marked.setOptions({
+            breaks: true,
+            gfm: true,
+            sanitize: false,
+            smartLists: true,
+            smartypants: true
+        });
+
+        function addMessage(content, isUser = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
+            
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            
+            if (isUser) {
+                // ユーザーメッセージはプレーンテキストで表示
+                messageContent.textContent = content;
+            } else {
+                // ボットメッセージはMarkdownをレンダリング
+                messageContent.innerHTML = marked.parse(content);
+            }
+            
+            messageDiv.appendChild(messageContent);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        function addStreamingMessage() {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = 'message bot-message';
+            
+            const messageContent = document.createElement('div');
+            messageContent.className = 'message-content';
+            messageContent.textContent = '';
+            
+            const sourcesDiv = document.createElement('div');
+            sourcesDiv.className = 'sources';
+            sourcesDiv.style.display = 'none';
+            
+            messageDiv.appendChild(messageContent);
+            messageDiv.appendChild(sourcesDiv);
+            chatMessages.appendChild(messageDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+            
+            return { messageContent, sourcesDiv };
+        }
+
+        function extractDateFromFilename(filename) {
+            if (!filename) return null;
+            
+            // yyyymmdd形式の日付を検索（アンダースコアありまたはなし）
+            const datePatterns = [
+                /_(\d{8})(?:\.|_|$)/,  // _yyyymmdd形式
+                /(?:^|[^\d])(\d{8})(?:[^\d]|$)/,  // yyyymmdd形式（前後に数字以外の文字）
+            ];
+            
+            for (const pattern of datePatterns) {
+                const match = filename.match(pattern);
+                if (match) {
+                    const dateStr = match[1];
+                    try {
+                        // 日付の妥当性をチェック
+                        const year = parseInt(dateStr.substring(0, 4));
+                        const month = parseInt(dateStr.substring(4, 6));
+                        const day = parseInt(dateStr.substring(6, 8));
+                        
+                        // 妥当な日付範囲をチェック（1900年〜2100年）
+                        if (year >= 1900 && year <= 2100) {
+                            const date = new Date(year, month - 1, day);
+                            if (date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day) {
+                                return date;
+                            }
+                        }
+                    } catch (e) {
+                        // 無効な日付の場合は次のパターンを試す
+                        continue;
+                    }
+                }
+            }
+            
+            return null;
+        }
+
+        function displaySources(sourcesDiv, groundingMetadata) {
+            if (!groundingMetadata || !groundingMetadata.grounding_chunks || groundingMetadata.grounding_chunks.length === 0) {
+                return;
+            }
+
+            sourcesDiv.innerHTML = '';
+            
+            // 出典数を最大5件に制限
+            const maxSources = 5;
+            const chunksToShow = groundingMetadata.grounding_chunks.slice(0, maxSources);
+            
+            chunksToShow.forEach((chunk, index) => {
+                if (chunk.title) {
+                    const sourceItem = document.createElement('div');
+                    sourceItem.className = 'source-item';
+                    
+                    const sourceText = document.createElement('span');
+                    
+                    // 日付情報を抽出して表示に含める
+                    const extractedDate = extractDateFromFilename(chunk.title);
+                    const dateInfo = extractedDate ? ` (${extractedDate.getFullYear()}-${String(extractedDate.getMonth() + 1).padStart(2, '0')}-${String(extractedDate.getDate()).padStart(2, '0')})` : '';
+                    
+                    sourceText.textContent = `出典 ${index + 1}：${chunk.title}${dateInfo}`;
+                    sourceItem.appendChild(sourceText);
+                    
+                    sourcesDiv.appendChild(sourceItem);
+                }
+            });
+            
+            // 制限を超えた場合の表示
+            if (groundingMetadata.grounding_chunks.length > maxSources) {
+                const moreItem = document.createElement('div');
+                moreItem.className = 'source-item';
+                moreItem.style.fontStyle = 'italic';
+                moreItem.style.color = '#6c757d';
+                moreItem.textContent = `他 ${groundingMetadata.grounding_chunks.length - maxSources} 件の出典があります`;
+                sourcesDiv.appendChild(moreItem);
+            }
+            
+            sourcesDiv.style.display = 'block';
+        }
+
+        function sendMessage() {
+            const message = messageInput.value.trim();
+            if (!message) return;
+
+            const deepModeToggle = document.getElementById('deepModeToggle');
+            const useDeepMode = deepModeToggle.checked;
+
+            addMessage(message, true);
+            messageInput.value = '';
+            sendButton.disabled = true;
+            
+            if (useDeepMode) {
+                sendButton.textContent = '深掘り調査中...';
+            } else {
+                sendButton.textContent = '送信中...';
+            }
+
+            const { messageContent, sourcesDiv } = addStreamingMessage();
+            let accumulatedText = '';
+
+            fetch('/chat', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ 
+                    message: message,
+                    deep_mode: useDeepMode
+                }),
+            })
+            .then(response => {
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+
+                function readStream() {
+                    return reader.read().then(({ done, value }) => {
+                        if (done) {
+                            // ストリーミング完了時に最終的なMarkdownレンダリング
+                            messageContent.innerHTML = marked.parse(accumulatedText);
+                            sendButton.disabled = false;
+                            sendButton.textContent = '送信';
+                            return;
+                        }
+
+                        const text = decoder.decode(value);
+                        const lines = text.split('\n');
+                        
+                        lines.forEach(line => {
+                            if (line.startsWith('data: ')) {
+                                try {
+                                    const data = JSON.parse(line.substring(6));
+                                    if (data.chunk) {
+                                        accumulatedText += data.chunk;
+                                        // ストリーミング中はプレーンテキストで表示（パフォーマンス向上）
+                                        messageContent.textContent = accumulatedText;
+                                        chatMessages.scrollTop = chatMessages.scrollHeight;
+                                    }
+                                    if (data.done && data.grounding_metadata) {
+                                        displaySources(sourcesDiv, data.grounding_metadata);
+                                    }
+                                    
+                                    // 深掘りモードの場合、ステップ情報を表示
+                                    if (useDeepMode && data.step) {
+                                        updateProgressIndicator(data.step);
+                                    }
+                                } catch (e) {
+                                    console.error('Error parsing JSON:', e);
+                                }
+                            }
+                        });
+
+                        return readStream();
+                    });
+                }
+
+                return readStream();
+            })
+            .catch(error => {
+                console.error('Error:', error);
+                messageContent.textContent = 'エラーが発生しました。';
+                sendButton.disabled = false;
+                sendButton.textContent = '送信';
+            });
+        }
+
+        function updateProgressIndicator(step) {
+            const progressMessages = {
+                'planning': '📋 調査計画を立案中...',
+                'plan_complete': '✅ 計画完了',
+                'query_1': '🔍 質問1を調査中...',
+                'answer_1': '✅ 回答1完了',
+                'query_2': '🔍 質問2を調査中...',
+                'answer_2': '✅ 回答2完了',
+                'query_3': '🔍 質問3を調査中...',
+                'answer_3': '✅ 回答3完了',
+                'query_4': '🔍 質問4を調査中...',
+                'answer_4': '✅ 回答4完了',
+                'query_5': '🔍 質問5を調査中...',
+                'answer_5': '✅ 回答5完了',
+                'synthesizing': '📝 包括的な回答を作成中...',
+                'synthesis_complete': '✅ 包括的な回答完了',
+                'complete': '🎯 調査完了'
+            };
+            
+            const progressMessage = progressMessages[step];
+            if (progressMessage) {
+                sendButton.textContent = progressMessage;
+            }
+        }
+
+        sendButton.addEventListener('click', sendMessage);
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendMessage();
+            }
+        });
+
+        // フォーカスを入力欄に設定
+        messageInput.focus();
+    </script>
+</body>
+</html> 
