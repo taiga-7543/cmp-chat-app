@@ -613,12 +613,13 @@ def generate_response(user_message):
         )
     ]
 
-    generate_content_config = types.GenerateContentConfig(
-        temperature=1,
-        top_p=1,
-        seed=0,
-        max_output_tokens=65535,
-        safety_settings=[
+    # GenerateContentConfigを作成
+    config_params = {
+        'temperature': 1,
+        'top_p': 1,
+        'seed': 0,
+        'max_output_tokens': 65535,
+        'safety_settings': [
             types.SafetySetting(
                 category="HARM_CATEGORY_HATE_SPEECH",
                 threshold="OFF"
@@ -636,11 +637,19 @@ def generate_response(user_message):
                 threshold="OFF"
             )
         ],
-        tools=tools,
-        thinking_config=types.ThinkingConfig(
-            thinking_budget=-1,
-        ),
-    )
+        'tools': tools,
+    }
+    
+    # ThinkingConfigが利用可能な場合のみ追加
+    try:
+        if hasattr(types, 'ThinkingConfig'):
+            config_params['thinking_config'] = types.ThinkingConfig(
+                thinking_budget=-1,
+            )
+    except AttributeError:
+        pass  # ThinkingConfigが利用できない場合は無視
+    
+    generate_content_config = types.GenerateContentConfig(**config_params)
 
     full_response = ""
     grounding_metadata = None
