@@ -7,14 +7,37 @@ import asyncio
 import time
 import re
 from datetime import datetime
+import tempfile
 
 app = Flask(__name__)
+
+# 環境変数から設定を読み込み
+PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', 'dotd-development-division')
+RAG_CORPUS = os.environ.get('RAG_CORPUS', f'projects/{PROJECT_ID}/locations/us-central1/ragCorpora/3458764513820540928')
+GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+
+def setup_google_auth():
+    """Google Cloud認証を設定"""
+    # 環境変数からサービスアカウントキーのJSONを読み込む
+    credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+    if credentials_json:
+        # JSONをファイルに書き込んで認証設定
+        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+            f.write(credentials_json)
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = f.name
+    
+    # 既存のGOOGLE_APPLICATION_CREDENTIALSがある場合はそのまま使用
+    if not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS') and not credentials_json:
+        print("Warning: Google Cloud認証情報が設定されていません")
+
+# 認証設定を初期化
+setup_google_auth()
 
 def create_rag_client():
     """RAGクライアントを作成"""
     client = genai.Client(
         vertexai=True,
-        project="dotd-development-division",
+        project=PROJECT_ID,
         location="global",
     )
     return client
@@ -203,7 +226,7 @@ def generate_plan_and_questions(user_message):
         )
         
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_MODEL,
             contents=contents,
             config=config,
         )
@@ -255,7 +278,7 @@ def execute_single_rag_query(question):
                     vertex_rag_store=types.VertexRagStore(
                         rag_resources=[
                             types.VertexRagStoreRagResource(
-                                rag_corpus="projects/dotd-development-division/locations/us-central1/ragCorpora/3458764513820540928"
+                                rag_corpus=RAG_CORPUS
                             )
                         ],
                     )
@@ -271,7 +294,7 @@ def execute_single_rag_query(question):
         )
         
         response = client.models.generate_content(
-            model="gemini-2.5-flash",
+            model=GEMINI_MODEL,
             contents=contents,
             config=config,
         )
@@ -338,7 +361,7 @@ def synthesize_comprehensive_answer(user_message, plan_text, qa_results):
     )
     
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model=GEMINI_MODEL,
         contents=contents,
         config=config,
     )
@@ -568,7 +591,6 @@ def generate_response(user_message):
     """ユーザーメッセージに対してRAGを使用してレスポンスを生成"""
     client = create_rag_client()
     
-    model = "gemini-2.5-flash"
     contents = [
         types.Content(
             role="user",
@@ -583,7 +605,7 @@ def generate_response(user_message):
                 vertex_rag_store=types.VertexRagStore(
                     rag_resources=[
                         types.VertexRagStoreRagResource(
-                            rag_corpus="projects/dotd-development-division/locations/us-central1/ragCorpora/3458764513820540928"
+                            rag_corpus=RAG_CORPUS
                         )
                     ],
                 )
@@ -626,7 +648,7 @@ def generate_response(user_message):
     print(f"DEBUG: Starting generation for message: {user_message}")
     
     for chunk in client.models.generate_content_stream(
-        model=model,
+        model=GEMINI_MODEL,
         contents=contents,
         config=generate_content_config,
     ):
