@@ -40,14 +40,40 @@ def setup_google_auth():
     # 環境変数からサービスアカウントキーのJSONを読み込む
     credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
     if credentials_json:
-        # JSONをファイルに書き込んで認証設定
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-            f.write(credentials_json)
-            os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = f.name
+        try:
+            # JSONの妥当性を確認
+            parsed_json = json.loads(credentials_json)
+            
+            # 必要なフィールドが存在するか確認
+            required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
+            missing_fields = [field for field in required_fields if field not in parsed_json]
+            
+            if missing_fields:
+                print(f"Warning: Missing required fields in Google Cloud credentials: {missing_fields}")
+                return
+            
+            # JSONをファイルに書き込んで認証設定
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
+                json.dump(parsed_json, f, indent=2)
+                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = f.name
+                print(f"Google Cloud credentials file created: {f.name}")
+                
+        except json.JSONDecodeError as e:
+            print(f"Error: Invalid JSON in GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
+            print("Please check the format of your Google Cloud credentials JSON.")
+            return
+        except Exception as e:
+            print(f"Error setting up Google Cloud authentication: {e}")
+            return
     
     # 既存のGOOGLE_APPLICATION_CREDENTIALSがある場合はそのまま使用
     if not os.environ.get('GOOGLE_APPLICATION_CREDENTIALS') and not credentials_json:
         print("Warning: Google Cloud認証情報が設定されていません")
+        print("以下の環境変数のいずれかを設定してください:")
+        print("- GOOGLE_APPLICATION_CREDENTIALS: サービスアカウントキーファイルのパス")
+        print("- GOOGLE_APPLICATION_CREDENTIALS_JSON: サービスアカウントキーのJSON文字列")
+    elif os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
+        print(f"Using existing Google Cloud credentials file: {os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')}")
 
 # 認証設定を初期化
 setup_google_auth()

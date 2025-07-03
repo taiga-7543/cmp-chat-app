@@ -104,10 +104,18 @@ gunicorn --bind 0.0.0.0:8080 app:app
      GOOGLE_CLOUD_PROJECT=your-project-id
      RAG_CORPUS=projects/your-project-id/locations/us-central1/ragCorpora/your-corpus-id
      GEMINI_MODEL=gemini-2.5-flash
-     GOOGLE_APPLICATION_CREDENTIALS_JSON={"type": "service_account", "project_id": "your-project-id", ...}
      AUTH_USERNAME=admin
      AUTH_PASSWORD=your-secure-password
      ```
+   - **Google Cloud認証情報**（以下のいずれかを設定）:
+     ```
+     GOOGLE_APPLICATION_CREDENTIALS_JSON={"type":"service_account","project_id":"your-project-id","private_key_id":"key-id","private_key":"-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY\n-----END PRIVATE KEY-----\n","client_email":"your-service-account@your-project-id.iam.gserviceaccount.com","client_id":"123456789","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40your-project-id.iam.gserviceaccount.com"}
+     ```
+
+   **重要**: 
+   - JSONは1行で記述し、改行文字は含めないでください
+   - ダブルクォートは適切にエスケープしてください
+   - private_keyの改行は `\n` で表現してください
 
 4. **デプロイ実行**
    - 「Create Web Service」をクリック
@@ -204,6 +212,27 @@ export GEMINI_MODEL="gemini-2.0-flash-exp"
 - Google Cloud認証情報が正しく設定されているか確認
 - プロジェクトIDが正しいか確認
 - Vertex AI APIが有効化されているか確認
+
+### JSON認証エラー
+
+**エラー例**: `File /tmp/tmpXXXXXX.json is not a valid json file`
+
+**原因**: `GOOGLE_APPLICATION_CREDENTIALS_JSON`環境変数のJSON形式が正しくない
+
+**対処法**:
+1. **JSON形式を確認**:
+   - 1行で記述されているか
+   - すべての文字列がダブルクォートで囲まれているか
+   - 改行文字が `\n` でエスケープされているか
+
+2. **正しい形式の例**:
+   ```json
+   {"type":"service_account","project_id":"your-project-id","private_key_id":"key-id","private_key":"-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY\n-----END PRIVATE KEY-----\n","client_email":"your-service-account@your-project-id.iam.gserviceaccount.com","client_id":"123456789","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40your-project-id.iam.gserviceaccount.com"}
+   ```
+
+3. **JSONバリデーションツールを使用**:
+   - オンラインJSONバリデーターで形式を確認
+   - 不正な文字や構文エラーを修正
 
 ### RAGコーパスエラー
 
