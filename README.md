@@ -8,6 +8,7 @@ Vertex AI RAGを使用したWebベースのチャットアプリケーション�
 - **RAG統合**: Vertex AI RAGを使用した高度な質問応答
 - **レスポンシブデザイン**: デスクトップ・モバイル対応
 - **モダンUI**: 美しいグラデーションとアニメーション
+- **ベーシック認証**: 内部スタッフ向けアクセス制限
 
 ## セットアップ
 
@@ -46,6 +47,10 @@ GOOGLE_APPLICATION_CREDENTIALS=path/to/your/service-account-key.json
 
 # 方法B: サービスアカウントキーのJSONを直接設定（Renderなどのクラウドサービス向け）
 GOOGLE_APPLICATION_CREDENTIALS_JSON={"type": "service_account", "project_id": "your-project-id", ...}
+
+# ベーシック認証（内部スタッフ向けアクセス制限）
+AUTH_USERNAME=admin
+AUTH_PASSWORD=your-secure-password
 ```
 
 #### 方法2: 環境変数を直接設定
@@ -100,6 +105,8 @@ gunicorn --bind 0.0.0.0:8080 app:app
      RAG_CORPUS=projects/your-project-id/locations/us-central1/ragCorpora/your-corpus-id
      GEMINI_MODEL=gemini-2.5-flash
      GOOGLE_APPLICATION_CREDENTIALS_JSON={"type": "service_account", "project_id": "your-project-id", ...}
+     AUTH_USERNAME=admin
+     AUTH_PASSWORD=your-secure-password
      ```
 
 4. **デプロイ実行**
@@ -164,6 +171,8 @@ cmp-chat-app/
 | `GEMINI_MODEL` | 使用するGeminiモデル | `gemini-2.5-flash` |
 | `GOOGLE_APPLICATION_CREDENTIALS` | サービスアカウントキーファイルのパス | - |
 | `GOOGLE_APPLICATION_CREDENTIALS_JSON` | サービスアカウントキーのJSON文字列 | - |
+| `AUTH_USERNAME` | ベーシック認証のユーザー名 | `admin` |
+| `AUTH_PASSWORD` | ベーシック認証のパスワード | - |
 
 ## カスタマイズ
 

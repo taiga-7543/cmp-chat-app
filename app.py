@@ -1,4 +1,5 @@
 from flask import Flask, request, jsonify, render_template, Response
+from flask_httpauth import HTTPBasicAuth
 from google import genai
 from google.genai import types
 import json
@@ -8,13 +9,31 @@ import time
 import re
 from datetime import datetime
 import tempfile
+import hashlib
 
 app = Flask(__name__)
+auth = HTTPBasicAuth()
 
 # 環境変数から設定を読み込み
 PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', 'dotd-development-division')
 RAG_CORPUS = os.environ.get('RAG_CORPUS', f'projects/{PROJECT_ID}/locations/us-central1/ragCorpora/3458764513820540928')
 GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
+
+# 認証設定
+AUTH_USERNAME = os.environ.get('AUTH_USERNAME', 'admin')
+AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 'password123')
+
+@auth.verify_password
+def verify_password(username, password):
+    """ユーザー名とパスワードを検証"""
+    if username == AUTH_USERNAME and password == AUTH_PASSWORD:
+        return username
+    return None
+
+@auth.error_handler
+def auth_error(status):
+    """認証エラーハンドラー"""
+    return jsonify({'error': 'アクセスが拒否されました。正しいユーザー名とパスワードを入力してください。'}), status
 
 def setup_google_auth():
     """Google Cloud認証を設定"""
@@ -728,11 +747,13 @@ def generate_response(user_message):
     }
 
 @app.route('/')
+@auth.login_required
 def index():
     """メインページ"""
     return render_template('index.html')
 
 @app.route('/chat', methods=['POST'])
+@auth.login_required
 def chat():
     """チャットエンドポイント"""
     data = request.json
