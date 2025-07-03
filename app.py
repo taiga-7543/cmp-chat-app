@@ -10,6 +10,7 @@ import re
 from datetime import datetime
 import tempfile
 import hashlib
+import base64
 
 app = Flask(__name__)
 auth = HTTPBasicAuth()
@@ -35,6 +36,59 @@ def auth_error(status):
     """認証エラーハンドラー"""
     return jsonify({'error': 'アクセスが拒否されました。正しいユーザー名とパスワードを入力してください。'}), status
 
+def fix_base64_padding(data):
+    """Base64データのパディングを修正"""
+    missing_padding = len(data) % 4
+    if missing_padding:
+        data += '=' * (4 - missing_padding)
+    return data
+
+def validate_and_fix_private_key(private_key):
+    """プライベートキーの形式を検証・修正"""
+    if not private_key:
+        return private_key
+    
+    # PEM形式のヘッダー・フッターを確認
+    if not private_key.startswith('-----BEGIN PRIVATE KEY-----'):
+        return private_key
+    
+    # PEM形式のキーを行に分割
+    lines = private_key.split('\n')
+    if len(lines) < 3:
+        return private_key
+    
+    # ヘッダーとフッターを除いたBase64部分を取得
+    base64_lines = []
+    for line in lines[1:-1]:  # ヘッダーとフッターを除く
+        line = line.strip()
+        if line and not line.startswith('-----'):
+            base64_lines.append(line)
+    
+    if not base64_lines:
+        return private_key
+    
+    # Base64文字列を結合
+    base64_data = ''.join(base64_lines)
+    
+    # パディングを修正
+    try:
+        fixed_base64 = fix_base64_padding(base64_data)
+        # Base64デコードをテスト
+        base64.b64decode(fixed_base64)
+        
+        # 修正されたキーを再構築
+        fixed_private_key = '-----BEGIN PRIVATE KEY-----\n'
+        # 64文字ずつ改行
+        for i in range(0, len(fixed_base64), 64):
+            fixed_private_key += fixed_base64[i:i+64] + '\n'
+        fixed_private_key += '-----END PRIVATE KEY-----'
+        
+        return fixed_private_key
+        
+    except Exception as e:
+        print(f"Warning: Could not fix private key Base64 padding: {e}")
+        return private_key
+
 def setup_google_auth():
     """Google Cloud認証を設定"""
     # 環境変数からサービスアカウントキーのJSONを読み込む
@@ -51,6 +105,14 @@ def setup_google_auth():
             if missing_fields:
                 print(f"Warning: Missing required fields in Google Cloud credentials: {missing_fields}")
                 return
+            
+            # プライベートキーのBase64パディングを修正
+            if 'private_key' in parsed_json:
+                original_key = parsed_json['private_key']
+                fixed_key = validate_and_fix_private_key(original_key)
+                if fixed_key != original_key:
+                    print("INFO: Fixed private key Base64 padding")
+                    parsed_json['private_key'] = fixed_key
             
             # JSONをファイルに書き込んで認証設定
             with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:

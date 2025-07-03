@@ -234,6 +234,30 @@ export GEMINI_MODEL="gemini-2.0-flash-exp"
    - オンラインJSONバリデーターで形式を確認
    - 不正な文字や構文エラーを修正
 
+### Base64パディングエラー
+
+**エラー例**: `Error('Incorrect padding')`
+
+**原因**: サービスアカウントキーの`private_key`フィールドのBase64エンコーディングにパディングエラーがある
+
+**対処法**:
+1. **サービスアカウントキーを再生成**:
+   - Google Cloud Consoleで新しいサービスアカウントキーを作成
+   - 古いキーを削除して新しいキーを使用
+
+2. **キーの形式を確認**:
+   - `private_key`フィールドが正しいPEM形式になっているか確認
+   - 改行文字が`\n`で正しくエスケープされているか確認
+
+3. **正しいprivate_key形式の例**:
+   ```
+   "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n"
+   ```
+
+4. **自動修正機能**:
+   - アプリケーションにはBase64パディングの自動修正機能が組み込まれています
+   - それでも解決しない場合は、新しいサービスアカウントキーを生成してください
+
 ### RAGコーパスエラー
 
 - コーパスIDが正しいか確認
