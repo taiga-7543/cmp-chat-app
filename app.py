@@ -11,6 +11,10 @@ from datetime import datetime
 import tempfile
 import hashlib
 import base64
+from dotenv import load_dotenv
+
+# .envファイルを読み込み
+load_dotenv()
 
 app = Flask(__name__)
 auth = HTTPBasicAuth()
