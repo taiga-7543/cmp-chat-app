@@ -25,8 +25,8 @@ RAG_CORPUS = os.environ.get('RAG_CORPUS', f'projects/{PROJECT_ID}/locations/us-c
 GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 
 # 認証設定
-AUTH_USERNAME = os.environ.get('AUTH_USERNAME', 'admin')
-AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 'password123')
+AUTH_USERNAME = os.environ.get('AUTH_USERNAME', 'u7F3kL9pQ2zX')
+AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 's8Vn2BqT5wXc')
 
 @auth.verify_password
 def verify_password(username, password):
