@@ -25,8 +25,8 @@ RAG_CORPUS = os.environ.get('RAG_CORPUS', f'projects/{PROJECT_ID}/locations/us-c
 GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 
 # 認証設定
-AUTH_USERNAME = os.environ.get('AUTH_USERNAME', 'admin')
-AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 'password123')
+AUTH_USERNAME = os.environ.get('AUTH_USERNAME', 'u7F3kL9pQ2zX')
+AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 's8Vn2BqT5wXc')
 
 @auth.verify_password
 def verify_password(username, password):
@@ -753,14 +753,50 @@ def generate_response(user_message):
     
     # ThinkingConfigが利用可能な場合のみ追加
     try:
-        if hasattr(types, 'ThinkingConfig'):
+        # より詳細なチェックを実装
+        thinking_config_available = False
+        try:
+            # ThinkingConfigクラスが存在するかチェック
+            if hasattr(types, 'ThinkingConfig'):
+                # 実際にインスタンス化できるかテスト
+                test_config = types.ThinkingConfig(thinking_budget=-1)
+                thinking_config_available = True
+                print("DEBUG: ThinkingConfig is available")
+            else:
+                # 代替的なアプローチ: 直接インポートを試行
+                try:
+                    from google.genai.types import ThinkingConfig
+                    test_config = ThinkingConfig(thinking_budget=-1)
+                    thinking_config_available = True
+                    print("DEBUG: ThinkingConfig imported directly")
+                except ImportError:
+                    print("DEBUG: ThinkingConfig not available via direct import")
+        except (AttributeError, TypeError, ValueError) as e:
+            print(f"DEBUG: ThinkingConfig not available: {e}")
+            thinking_config_available = False
+        
+        if thinking_config_available:
             config_params['thinking_config'] = types.ThinkingConfig(
                 thinking_budget=-1,
             )
-    except AttributeError:
+            print("DEBUG: Added ThinkingConfig to config")
+        else:
+            print("DEBUG: Skipping ThinkingConfig - not available")
+    except Exception as e:
+        print(f"DEBUG: Error checking ThinkingConfig: {e}")
         pass  # ThinkingConfigが利用できない場合は無視
     
-    generate_content_config = types.GenerateContentConfig(**config_params)
+    # 安全にGenerateContentConfigを作成
+    try:
+        generate_content_config = types.GenerateContentConfig(**config_params)
+        print("DEBUG: GenerateContentConfig created successfully")
+    except Exception as e:
+        print(f"DEBUG: Error creating GenerateContentConfig: {e}")
+        # ThinkingConfigを除外して再試行
+        if 'thinking_config' in config_params:
+            del config_params['thinking_config']
+            print("DEBUG: Retrying without ThinkingConfig")
+            generate_content_config = types.GenerateContentConfig(**config_params)
 
     full_response = ""
     grounding_metadata = None
