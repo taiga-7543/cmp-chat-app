@@ -3,11 +3,12 @@ services:
     name: cmp-chat-app
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app
+    startCommand: gunicorn app:app --workers=1 --threads=2 --worker-class=sync --worker-connections=1000 --max-requests=1000 --max-requests-jitter=100 --timeout=300 --keep-alive=2 --preload
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: GOOGLE_APPLICATION_CREDENTIALS
         sync: false
       - key: GOOGLE_CLOUD_PROJECT
-        sync: false 
+        sync: false
+    plan: starter 

@@ -11,6 +11,7 @@ from datetime import datetime
 import tempfile
 import hashlib
 import base64
+import gc
 from dotenv import load_dotenv
 
 # .envファイルを読み込み
@@ -143,6 +144,9 @@ def setup_google_auth():
 
 # 認証設定を初期化
 setup_google_auth()
+
+# メモリ管理の設定
+gc.set_threshold(700, 10, 10)  # より積極的なガベージコレクション
 
 def create_rag_client():
     """RAGクライアントを作成"""
@@ -880,6 +884,26 @@ def index():
     """メインページ"""
     return render_template('index.html')
 
+@app.route('/health')
+def health():
+    """ヘルスチェックエンドポイント"""
+    import psutil
+    import gc
+    
+    # メモリ使用量を取得
+    process = psutil.Process()
+    memory_info = process.memory_info()
+    
+    # ガベージコレクションを実行
+    gc.collect()
+    
+    return jsonify({
+        'status': 'healthy',
+        'memory_usage_mb': round(memory_info.rss / 1024 / 1024, 2),
+        'memory_percent': round(process.memory_percent(), 2),
+        'cpu_percent': round(process.cpu_percent(), 2)
+    })
+
 @app.route('/chat', methods=['POST'])
 @auth.login_required
 def chat():
@@ -901,6 +925,10 @@ def chat():
                 # 通常モードを使用
                 for chunk_data in generate_response(user_message):
                     yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
+            
+            # メモリクリーンアップ
+            gc.collect()
+            
         except Exception as e:
             print(f"Error in chat endpoint: {e}")
             error_data = {
@@ -909,6 +937,8 @@ def chat():
                 'grounding_metadata': None
             }
             yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
+            # エラー時もメモリクリーンアップ
+            gc.collect()
     
     return Response(generate(), mimetype='text/plain')
 
