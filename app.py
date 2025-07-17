@@ -22,7 +22,7 @@ auth = HTTPBasicAuth()
 
 # 環境変数から設定を読み込み
 PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', 'dotd-development-division')
-RAG_CORPUS = os.environ.get('RAG_CORPUS', f'projects/{PROJECT_ID}/locations/us-central1/ragCorpora/3458764513820540928')
+RAG_CORPUS = os.environ.get('RAG_CORPUS', f'projects/{PROJECT_ID}/locations/us-central1/ragCorpora/5188146770730811392')
 GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 
 # 認証設定
