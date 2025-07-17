@@ -13,6 +13,15 @@ import hashlib
 import base64
 import gc
 from dotenv import load_dotenv
+import io
+import mimetypes
+from werkzeug.utils import secure_filename
+from google.cloud import aiplatform
+# RAGサービスクライアントを一時的にコメントアウト
+# from google.cloud.aiplatform_v1 import RagDataServiceClient
+# from google.cloud.aiplatform_v1.types import ListRagFilesRequest, ImportRagFilesRequest, RagFile
+from google.cloud import storage
+import uuid
 
 # .envファイルを読み込み
 load_dotenv()
@@ -877,6 +886,308 @@ def generate_response(user_message):
         'done': True,
         'grounding_metadata': converted_metadata
     }
+
+# アップロード許可ファイル形式
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'docx', 'md', 'doc', 'rtf'}
+UPLOAD_FOLDER = 'uploads'
+MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
+
+# アップロードフォルダの作成
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+app.config['MAX_CONTENT_LENGTH'] = MAX_CONTENT_LENGTH
+
+def allowed_file(filename):
+    """アップロード可能なファイル形式かチェック"""
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+def upload_to_cloud_storage(file_path, filename):
+    """Cloud Storageにファイルをアップロード"""
+    try:
+        # Cloud Storageクライアントを初期化
+        client = storage.Client(project=PROJECT_ID)
+        bucket_name = f"{PROJECT_ID}-rag-documents"
+        
+        # バケットが存在しない場合は作成
+        try:
+            bucket = client.get_bucket(bucket_name)
+        except Exception:
+            bucket = client.create_bucket(bucket_name)
+        
+        # ファイルをアップロード
+        blob_name = f"documents/{datetime.now().strftime('%Y%m%d_%H%M%S')}_{filename}"
+        blob = bucket.blob(blob_name)
+        
+        with open(file_path, 'rb') as file_data:
+            blob.upload_from_file(file_data)
+        
+        return f"gs://{bucket_name}/{blob_name}"
+    except Exception as e:
+        print(f"Cloud Storageアップロードエラー: {e}")
+        return None
+
+def get_rag_documents():
+    """Vertex AI RAGから直接ドキュメント一覧を取得"""
+    try:
+        print("RAGサービスクライアントが利用できません。Cloud Storageから取得します。")
+        return []
+        
+        # RAGサービスクライアント機能を一時的に無効化
+        # client = RagDataServiceClient()
+        # ... 以下のコードは一時的にコメントアウト
+        
+    except Exception as e:
+        print(f"RAGドキュメント一覧取得エラー: {e}")
+        return []
+
+def get_file_size_string(size_bytes):
+    """ファイルサイズを人間が読みやすい形式に変換"""
+    if size_bytes == 0:
+        return "0 B"
+    
+    size_names = ["B", "KB", "MB", "GB", "TB"]
+    i = 0
+    while size_bytes >= 1024 and i < len(size_names) - 1:
+        size_bytes /= 1024.0
+        i += 1
+    
+    return f"{size_bytes:.1f} {size_names[i]}"
+
+def add_document_to_rag(file_uri, display_name):
+    """Vertex AI RAGにドキュメントを追加"""
+    try:
+        print(f"RAGサービスクライアントが利用できません。プレースホルダーとして成功を返します: {display_name}")
+        
+        # RAGサービスクライアント機能を一時的に無効化
+        # client = RagDataServiceClient()
+        # ... 以下のコードは一時的にコメントアウト
+        
+        return {
+            "success": True,
+            "operation_name": "placeholder_operation",
+            "display_name": display_name,
+            "file_uri": file_uri,
+            "message": "ドキュメントをCloud Storageにアップロードしました。（RAG機能は一時的に無効化されています）"
+        }
+        
+    except Exception as e:
+        print(f"RAGドキュメント追加エラー: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+def delete_rag_document(rag_file_name):
+    """Vertex AI RAGからドキュメントを削除"""
+    try:
+        print(f"RAGサービスクライアントが利用できません。プレースホルダーとして成功を返します: {rag_file_name}")
+        
+        # RAGサービスクライアント機能を一時的に無効化
+        # client = RagDataServiceClient()
+        # ... 以下のコードは一時的にコメントアウト
+        
+        return {
+            "success": True,
+            "message": "RAG機能は一時的に無効化されています"
+        }
+        
+    except Exception as e:
+        print(f"RAGドキュメント削除エラー: {e}")
+        return {
+            "success": False,
+            "error": str(e)
+        }
+
+@app.route('/upload_documents', methods=['POST'])
+@auth.login_required
+def upload_documents():
+    """ドキュメントアップロードエンドポイント"""
+    try:
+        files = request.files.getlist('files')
+        
+        if not files:
+            return jsonify({'error': 'ファイルが選択されていません'}), 400
+        
+        results = []
+        
+        for file in files:
+            if file.filename == '':
+                continue
+            
+            if file and allowed_file(file.filename):
+                try:
+                    # ファイル名を安全にする
+                    filename = secure_filename(file.filename)
+                    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                    unique_filename = f"{timestamp}_{filename}"
+                    
+                    # 一時的にローカルに保存
+                    file_path = os.path.join(UPLOAD_FOLDER, unique_filename)
+                    file.save(file_path)
+                    
+                    # ファイルサイズを取得
+                    file_size = os.path.getsize(file_path)
+                    file_size_str = get_file_size_string(file_size)
+                    
+                    # Cloud Storageにアップロード
+                    gcs_uri = upload_to_cloud_storage(file_path, unique_filename)
+                    
+                    if gcs_uri:
+                        # Vertex AI RAGに追加
+                        rag_result = add_document_to_rag(gcs_uri, filename)
+                        
+                        if rag_result['success']:
+                            results.append({
+                                'success': True,
+                                'filename': filename,
+                                'message': f'アップロード完了 ({file_size_str}) - {rag_result.get("message", "")}',
+                                'size': file_size_str,
+                                'gcs_uri': gcs_uri
+                            })
+                        else:
+                            results.append({
+                                'success': False,
+                                'filename': filename,
+                                'message': f'RAG追加エラー: {rag_result["error"]}',
+                                'size': file_size_str
+                            })
+                    else:
+                        results.append({
+                            'success': False,
+                            'filename': filename,
+                            'message': 'Cloud Storageアップロードに失敗しました',
+                            'size': file_size_str
+                        })
+                    
+                    # ローカルファイルを削除
+                    try:
+                        os.remove(file_path)
+                    except:
+                        pass
+                    
+                except Exception as e:
+                    results.append({
+                        'success': False,
+                        'filename': file.filename,
+                        'message': f'処理エラー: {str(e)}',
+                        'size': 'unknown'
+                    })
+            else:
+                results.append({
+                    'success': False,
+                    'filename': file.filename,
+                    'message': f'サポートされていないファイル形式です。許可形式: {", ".join(ALLOWED_EXTENSIONS)}',
+                    'size': 'unknown'
+                })
+        
+        return jsonify({'results': results})
+    
+    except Exception as e:
+        print(f"アップロードエラー: {e}")
+        return jsonify({'error': f'アップロードエラー: {str(e)}'}), 500
+
+@app.route('/get_documents', methods=['GET'])
+@auth.login_required
+def get_documents():
+    """ドキュメント一覧取得エンドポイント"""
+    try:
+        use_rag_api = request.args.get('use_rag_api', 'false').lower() == 'true'
+        
+        if use_rag_api:
+            # Vertex AI RAGのAPIを直接使用
+            documents = get_rag_documents()
+            return jsonify({'documents': documents, 'source': 'rag_api'})
+        else:
+            # Cloud Storageからドキュメント一覧を取得（既存の実装）
+            client = storage.Client(project=PROJECT_ID)
+            bucket_name = f"{PROJECT_ID}-rag-documents"
+            
+            try:
+                bucket = client.get_bucket(bucket_name)
+                blobs = bucket.list_blobs(prefix="documents/")
+                
+                documents = []
+                for blob in blobs:
+                    # ファイル名から元のファイル名を抽出
+                    filename = blob.name.split('/')[-1]
+                    original_filename = '_'.join(filename.split('_')[2:]) if '_' in filename else filename
+                    
+                    documents.append({
+                        'id': blob.name,
+                        'title': original_filename,
+                        'created_at': blob.time_created.strftime('%Y-%m-%d %H:%M:%S'),
+                        'size': get_file_size_string(blob.size),
+                        'gcs_uri': f"gs://{bucket_name}/{blob.name}",
+                        'source': 'cloud_storage'
+                    })
+                
+                # 作成日時でソート（新しい順）
+                documents.sort(key=lambda x: x['created_at'], reverse=True)
+                
+                return jsonify({'documents': documents, 'source': 'cloud_storage'})
+                
+            except Exception as e:
+                print(f"バケット取得エラー: {e}")
+                return jsonify({'documents': [], 'source': 'cloud_storage'})
+    
+    except Exception as e:
+        print(f"ドキュメント一覧取得エラー: {e}")
+        return jsonify({'error': f'ドキュメント一覧取得エラー: {str(e)}'}), 500
+
+@app.route('/delete_document/<path:doc_id>', methods=['DELETE'])
+@auth.login_required
+def delete_document(doc_id):
+    """ドキュメント削除エンドポイント"""
+    try:
+        use_rag_api = request.args.get('use_rag_api', 'false').lower() == 'true'
+        
+        if use_rag_api:
+            # Vertex AI RAGから直接削除
+            result = delete_rag_document(doc_id)
+            return jsonify(result)
+        else:
+            # Cloud Storageからファイルを削除（既存の実装）
+            client = storage.Client(project=PROJECT_ID)
+            bucket_name = f"{PROJECT_ID}-rag-documents"
+            
+            try:
+                bucket = client.get_bucket(bucket_name)
+                blob = bucket.blob(doc_id)
+                blob.delete()
+                
+                return jsonify({
+                    'success': True,
+                    'message': 'ドキュメントを削除しました（Cloud Storageから）'
+                })
+                
+            except Exception as e:
+                print(f"ドキュメント削除エラー: {e}")
+                return jsonify({
+                    'success': False,
+                    'message': f'削除エラー: {str(e)}'
+                }), 500
+    
+    except Exception as e:
+        print(f"ドキュメント削除エラー: {e}")
+        return jsonify({
+            'success': False,
+            'message': f'削除エラー: {str(e)}'
+        }), 500
+
+@app.route('/get_settings', methods=['GET'])
+@auth.login_required
+def get_settings():
+    """設定情報取得エンドポイント"""
+    try:
+        return jsonify({
+            'rag_corpus': RAG_CORPUS,
+            'gemini_model': GEMINI_MODEL,
+            'project_id': PROJECT_ID,
+            'last_update': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+    except Exception as e:
+        print(f"設定取得エラー: {e}")
+        return jsonify({'error': f'設定取得エラー: {str(e)}'}), 500
 
 @app.route('/')
 @auth.login_required

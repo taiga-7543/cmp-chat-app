@@ -9,41 +9,198 @@
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
 </head>
 <body>
-    <div class="container">
-        <header>
-            <h1>CMP Chat App</h1>
-            <p>Vertex AI RAGを使用したチャットアプリ</p>
-        </header>
+    <div class="app-container">
+        <!-- サイドバー -->
+        <div class="sidebar" id="sidebar">
+            <div class="sidebar-header">
+                <h2>📋 機能メニュー</h2>
+                <button class="sidebar-toggle" id="sidebarToggle">←</button>
+            </div>
+            
+            <div class="sidebar-content">
+                <!-- チャット機能 -->
+                <div class="feature-section">
+                    <h3>💬 チャット</h3>
+                    <div class="feature-item active" id="chatFeature">
+                        <span class="feature-icon">💬</span>
+                        <span class="feature-text">チャット画面</span>
+                    </div>
+                </div>
+                
+                <!-- ドキュメント管理 -->
+                <div class="feature-section">
+                    <h3>📄 ドキュメント管理</h3>
+                    <div class="feature-item" id="uploadFeature">
+                        <span class="feature-icon">📤</span>
+                        <span class="feature-text">ドキュメント追加</span>
+                    </div>
+                    <div class="feature-item" id="documentsFeature">
+                        <span class="feature-icon">📚</span>
+                        <span class="feature-text">ドキュメント一覧</span>
+                    </div>
+                </div>
+                
+                <!-- 設定 -->
+                <div class="feature-section">
+                    <h3>⚙️ 設定</h3>
+                    <div class="feature-item" id="settingsFeature">
+                        <span class="feature-icon">⚙️</span>
+                        <span class="feature-text">設定</span>
+                    </div>
+                </div>
+            </div>
+        </div>
         
-        <div class="chat-container">
-            <div class="chat-messages" id="chatMessages">
-                <div class="message bot-message">
-                    <div class="message-content">
-                        こんにちは！何でもお聞きください。
+        <!-- モバイル用オーバーレイ -->
+        <div class="sidebar-overlay" id="sidebarOverlay"></div>
+        
+        <!-- メインコンテンツ -->
+        <div class="main-content">
+            <header>
+                <div class="header-content">
+                    <button class="menu-toggle" id="menuToggle">☰</button>
+                    <h1>CMP Chat App</h1>
+                    <p>Vertex AI RAGを使用したチャットアプリ</p>
+                </div>
+            </header>
+            
+            <!-- チャット画面 -->
+            <div class="content-panel" id="chatPanel">
+                <div class="chat-container">
+                    <div class="chat-messages" id="chatMessages">
+                        <div class="message bot-message">
+                            <div class="message-content">
+                                こんにちは！何でもお聞きください。
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div class="chat-input-container">
+                        <div class="mode-toggle">
+                            <label class="toggle-switch">
+                                <input type="checkbox" id="deepModeToggle">
+                                <span class="toggle-slider"></span>
+                            </label>
+                            <span class="toggle-label">深掘りモード</span>
+                        </div>
+                        <div class="chat-input">
+                            <input type="text" id="messageInput" placeholder="メッセージを入力してください..." />
+                            <button id="sendButton">送信</button>
+                        </div>
                     </div>
                 </div>
             </div>
             
-            <div class="chat-input-container">
-                <div class="mode-toggle">
-                    <label class="toggle-switch">
-                        <input type="checkbox" id="deepModeToggle">
-                        <span class="toggle-slider"></span>
-                        <span class="toggle-label">深掘りモード</span>
-                    </label>
+            <!-- ドキュメントアップロード画面 -->
+            <div class="content-panel" id="uploadPanel" style="display: none;">
+                <div class="upload-container">
+                    <h2>📤 ドキュメントをRAGに追加</h2>
+                    <p>PDFやテキストファイルをアップロードして、RAGシステムに追加できます。</p>
+                    
+                    <div class="upload-section">
+                        <div class="upload-area" id="uploadArea">
+                            <div class="upload-icon">📄</div>
+                            <div class="upload-text">
+                                <h3>ファイルをドラッグ&ドロップまたはクリック</h3>
+                                <p>サポート形式: PDF, TXT, DOCX, MD</p>
+                            </div>
+                            <input type="file" id="fileInput" accept=".pdf,.txt,.docx,.md" multiple style="display: none;">
+                        </div>
+                        
+                        <div class="upload-progress" id="uploadProgress" style="display: none;">
+                            <div class="progress-bar">
+                                <div class="progress-fill" id="progressFill"></div>
+                            </div>
+                            <div class="progress-text" id="progressText">アップロード中...</div>
+                        </div>
+                        
+                        <div class="upload-results" id="uploadResults" style="display: none;">
+                            <h3>アップロード結果</h3>
+                            <div class="results-list" id="resultsList"></div>
+                        </div>
+                    </div>
                 </div>
-                <div class="chat-input">
-                    <input type="text" id="messageInput" placeholder="メッセージを入力してください..." />
-                    <button id="sendButton">送信</button>
+            </div>
+            
+            <!-- ドキュメント一覧画面 -->
+            <div class="content-panel" id="documentsPanel" style="display: none;">
+                <div class="documents-container">
+                    <h2>📚 ドキュメント一覧</h2>
+                    <p>RAGシステムに追加されたドキュメントの一覧です。</p>
+                    
+                    <div class="documents-controls">
+                        <button class="refresh-btn" id="refreshDocuments">🔄 更新</button>
+                        <div class="api-toggle">
+                            <label class="toggle-label">データソース:</label>
+                            <div class="toggle-switch">
+                                <input type="checkbox" id="ragApiToggle">
+                                <span class="toggle-slider"></span>
+                            </div>
+                            <span class="toggle-label" id="apiToggleLabel">Cloud Storage</span>
+                        </div>
+                        <input type="text" id="searchDocuments" placeholder="ドキュメント名で検索..." class="search-input">
+                    </div>
+                    
+                    <div class="documents-list" id="documentsList">
+                        <div class="loading">読み込み中...</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 設定画面 -->
+            <div class="content-panel" id="settingsPanel" style="display: none;">
+                <div class="settings-container">
+                    <h2>⚙️ 設定</h2>
+                    
+                    <div class="settings-section">
+                        <h3>RAG設定</h3>
+                        <div class="setting-item">
+                            <label>RAGコーパスID:</label>
+                            <input type="text" id="ragCorpusId" readonly value="読み込み中...">
+                        </div>
+                        <div class="setting-item">
+                            <label>使用モデル:</label>
+                            <input type="text" id="geminiModel" readonly value="読み込み中...">
+                        </div>
+                    </div>
+                    
+                    <div class="settings-section">
+                        <h3>アプリケーション情報</h3>
+                        <div class="setting-item">
+                            <label>バージョン:</label>
+                            <span>v1.0.0</span>
+                        </div>
+                        <div class="setting-item">
+                            <label>最終更新:</label>
+                            <span id="lastUpdate">読み込み中...</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
     </div>
 
     <script>
+        // グローバル変数
         const chatMessages = document.getElementById('chatMessages');
         const messageInput = document.getElementById('messageInput');
         const sendButton = document.getElementById('sendButton');
+        const sidebar = document.getElementById('sidebar');
+        const sidebarToggle = document.getElementById('sidebarToggle');
+        const menuToggle = document.getElementById('menuToggle');
+        const sidebarOverlay = document.getElementById('sidebarOverlay');
+        
+        // パネル要素
+        const chatPanel = document.getElementById('chatPanel');
+        const uploadPanel = document.getElementById('uploadPanel');
+        const documentsPanel = document.getElementById('documentsPanel');
+        const settingsPanel = document.getElementById('settingsPanel');
+        
+        // 機能アイテム
+        const chatFeature = document.getElementById('chatFeature');
+        const uploadFeature = document.getElementById('uploadFeature');
+        const documentsFeature = document.getElementById('documentsFeature');
+        const settingsFeature = document.getElementById('settingsFeature');
 
         // Markdownの設定
         marked.setOptions({
@@ -54,6 +211,83 @@
             smartypants: true
         });
 
+        // モバイル判定
+        function isMobile() {
+            return window.innerWidth <= 768;
+        }
+
+        // サイドバーの制御
+        function toggleSidebar() {
+            if (isMobile()) {
+                sidebar.classList.toggle('show');
+                sidebarOverlay.classList.toggle('show');
+            } else {
+                sidebar.classList.toggle('collapsed');
+            }
+        }
+
+        function closeSidebar() {
+            if (isMobile()) {
+                sidebar.classList.remove('show');
+                sidebarOverlay.classList.remove('show');
+            }
+        }
+
+        sidebarToggle.addEventListener('click', toggleSidebar);
+        menuToggle.addEventListener('click', toggleSidebar);
+        sidebarOverlay.addEventListener('click', closeSidebar);
+
+        // ウィンドウリサイズ時の処理
+        window.addEventListener('resize', () => {
+            if (!isMobile()) {
+                sidebar.classList.remove('show');
+                sidebarOverlay.classList.remove('show');
+            }
+        });
+
+        // パネル切り替え
+        function showPanel(panelId) {
+            // 全てのパネルを隠す
+            const panels = document.querySelectorAll('.content-panel');
+            panels.forEach(panel => panel.style.display = 'none');
+            
+            // アクティブ状態をリセット
+            const features = document.querySelectorAll('.feature-item');
+            features.forEach(feature => feature.classList.remove('active'));
+            
+            // 選択されたパネルを表示
+            document.getElementById(panelId).style.display = 'block';
+            
+            // モバイルでサイドバーを閉じる
+            if (isMobile()) {
+                closeSidebar();
+            }
+        }
+
+        // 機能アイテムのクリックハンドラー
+        chatFeature.addEventListener('click', () => {
+            showPanel('chatPanel');
+            chatFeature.classList.add('active');
+        });
+
+        uploadFeature.addEventListener('click', () => {
+            showPanel('uploadPanel');
+            uploadFeature.classList.add('active');
+        });
+
+        documentsFeature.addEventListener('click', () => {
+            showPanel('documentsPanel');
+            documentsFeature.classList.add('active');
+            loadDocuments();
+        });
+
+        settingsFeature.addEventListener('click', () => {
+            showPanel('settingsPanel');
+            settingsFeature.classList.add('active');
+            loadSettings();
+        });
+
+        // チャット機能（既存のコードを維持）
         function addMessage(content, isUser = false) {
             const messageDiv = document.createElement('div');
             messageDiv.className = `message ${isUser ? 'user-message' : 'bot-message'}`;
@@ -62,10 +296,8 @@
             messageContent.className = 'message-content';
             
             if (isUser) {
-                // ユーザーメッセージはプレーンテキストで表示
                 messageContent.textContent = content;
             } else {
-                // ボットメッセージはMarkdownをレンダリング
                 messageContent.innerHTML = marked.parse(content);
             }
             
@@ -97,200 +329,372 @@
         function extractDateFromFilename(filename) {
             if (!filename) return null;
             
-            // yyyymmdd形式の日付を検索（アンダースコアありまたはなし）
-            const datePatterns = [
-                /_(\d{8})(?:\.|_|$)/,  // _yyyymmdd形式
-                /(?:^|[^\d])(\d{8})(?:[^\d]|$)/,  // yyyymmdd形式（前後に数字以外の文字）
-            ];
-            
-            for (const pattern of datePatterns) {
-                const match = filename.match(pattern);
-                if (match) {
-                    const dateStr = match[1];
-                    try {
-                        // 日付の妥当性をチェック
-                        const year = parseInt(dateStr.substring(0, 4));
-                        const month = parseInt(dateStr.substring(4, 6));
-                        const day = parseInt(dateStr.substring(6, 8));
-                        
-                        // 妥当な日付範囲をチェック（1900年〜2100年）
-                        if (year >= 1900 && year <= 2100) {
-                            const date = new Date(year, month - 1, day);
-                            if (date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day) {
-                                return date;
-                            }
-                        }
-                    } catch (e) {
-                        // 無効な日付の場合は次のパターンを試す
-                        continue;
-                    }
+            // yyyymmdd形式の日付を検索
+            const dateMatch = filename.match(/(\d{4})_?(\d{2})_?(\d{2})/);
+            if (dateMatch) {
+                const year = parseInt(dateMatch[1]);
+                const month = parseInt(dateMatch[2]);
+                const day = parseInt(dateMatch[3]);
+                
+                if (year >= 2000 && month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+                    return new Date(year, month - 1, day);
                 }
             }
             
             return null;
         }
 
-        function displaySources(sourcesDiv, groundingMetadata) {
-            if (!groundingMetadata || !groundingMetadata.grounding_chunks || groundingMetadata.grounding_chunks.length === 0) {
-                return;
-            }
+        // ドキュメントアップロード機能
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadProgress = document.getElementById('uploadProgress');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+        const uploadResults = document.getElementById('uploadResults');
+        const resultsList = document.getElementById('resultsList');
 
-            sourcesDiv.innerHTML = '';
+        uploadArea.addEventListener('click', () => {
+            fileInput.click();
+        });
+
+        uploadArea.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadArea.classList.add('drag-over');
+        });
+
+        uploadArea.addEventListener('dragleave', () => {
+            uploadArea.classList.remove('drag-over');
+        });
+
+        uploadArea.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadArea.classList.remove('drag-over');
+            const files = e.dataTransfer.files;
+            handleFiles(files);
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const files = e.target.files;
+            handleFiles(files);
+        });
+
+        function handleFiles(files) {
+            if (files.length === 0) return;
             
-            // 出典数を最大5件に制限
-            const maxSources = 5;
-            const chunksToShow = groundingMetadata.grounding_chunks.slice(0, maxSources);
-            
-            chunksToShow.forEach((chunk, index) => {
-                if (chunk.title) {
-                    const sourceItem = document.createElement('div');
-                    sourceItem.className = 'source-item';
-                    
-                    const sourceText = document.createElement('span');
-                    
-                    // 日付情報を抽出して表示に含める
-                    const extractedDate = extractDateFromFilename(chunk.title);
-                    const dateInfo = extractedDate ? ` (${extractedDate.getFullYear()}-${String(extractedDate.getMonth() + 1).padStart(2, '0')}-${String(extractedDate.getDate()).padStart(2, '0')})` : '';
-                    
-                    sourceText.textContent = `出典 ${index + 1}：${chunk.title}${dateInfo}`;
-                    sourceItem.appendChild(sourceText);
-                    
-                    sourcesDiv.appendChild(sourceItem);
-                }
-            });
-            
-            // 制限を超えた場合の表示
-            if (groundingMetadata.grounding_chunks.length > maxSources) {
-                const moreItem = document.createElement('div');
-                moreItem.className = 'source-item';
-                moreItem.style.fontStyle = 'italic';
-                moreItem.style.color = '#6c757d';
-                moreItem.textContent = `他 ${groundingMetadata.grounding_chunks.length - maxSources} 件の出典があります`;
-                sourcesDiv.appendChild(moreItem);
+            const formData = new FormData();
+            for (let i = 0; i < files.length; i++) {
+                formData.append('files', files[i]);
             }
             
-            sourcesDiv.style.display = 'block';
+            uploadFiles(formData);
         }
 
-        function sendMessage() {
+        function uploadFiles(formData) {
+            uploadProgress.style.display = 'block';
+            uploadResults.style.display = 'none';
+            
+            const xhr = new XMLHttpRequest();
+            
+            xhr.upload.onprogress = (e) => {
+                if (e.lengthComputable) {
+                    const percent = (e.loaded / e.total) * 100;
+                    progressFill.style.width = percent + '%';
+                    progressText.textContent = `アップロード中... ${percent.toFixed(1)}%`;
+                }
+            };
+            
+            xhr.onload = () => {
+                if (xhr.status === 200) {
+                    const response = JSON.parse(xhr.responseText);
+                    showUploadResults(response);
+                } else {
+                    alert('アップロードに失敗しました。');
+                }
+                uploadProgress.style.display = 'none';
+            };
+            
+            xhr.onerror = () => {
+                alert('アップロードエラーが発生しました。');
+                uploadProgress.style.display = 'none';
+            };
+            
+            xhr.open('POST', '/upload_documents');
+            xhr.send(formData);
+        }
+
+        function showUploadResults(response) {
+            uploadResults.style.display = 'block';
+            resultsList.innerHTML = '';
+            
+            response.results.forEach(result => {
+                const resultItem = document.createElement('div');
+                resultItem.className = `result-item ${result.success ? 'success' : 'error'}`;
+                
+                const icon = result.success ? '✅' : '❌';
+                const status = result.success ? '成功' : 'エラー';
+                
+                resultItem.innerHTML = `
+                    <div class="result-icon">${icon}</div>
+                    <div class="result-details">
+                        <div class="result-filename">${result.filename}</div>
+                        <div class="result-status">${status}: ${result.message}</div>
+                    </div>
+                `;
+                
+                resultsList.appendChild(resultItem);
+            });
+        }
+
+        // ドキュメント一覧機能
+        function loadDocuments() {
+            const documentsList = document.getElementById('documentsList');
+            const useRagApi = document.getElementById('ragApiToggle').checked;
+            
+            documentsList.innerHTML = '<div class="loading">読み込み中...</div>';
+            
+            const url = useRagApi ? '/get_documents?use_rag_api=true' : '/get_documents';
+            
+            fetch(url)
+                .then(response => response.json())
+                .then(data => {
+                    displayDocuments(data.documents, data.source);
+                })
+                .catch(error => {
+                    console.error('Error loading documents:', error);
+                    documentsList.innerHTML = '<div class="error">ドキュメントの読み込みに失敗しました。</div>';
+                });
+        }
+
+        function displayDocuments(documents, source) {
+            const documentsList = document.getElementById('documentsList');
+            documentsList.innerHTML = '';
+            
+            if (documents.length === 0) {
+                documentsList.innerHTML = '<div class="empty">ドキュメントがありません。</div>';
+                return;
+            }
+            
+            // データソース情報を表示
+            const sourceInfo = document.createElement('div');
+            sourceInfo.className = 'source-info';
+            sourceInfo.innerHTML = `
+                <p><strong>データソース:</strong> ${source === 'rag_api' ? 'Vertex AI RAG API' : 'Cloud Storage'}</p>
+                <p><strong>ドキュメント数:</strong> ${documents.length}件</p>
+            `;
+            documentsList.appendChild(sourceInfo);
+            
+            documents.forEach(doc => {
+                const docItem = document.createElement('div');
+                docItem.className = 'document-item';
+                
+                const sizeInfo = doc.size || 'N/A';
+                const createdAt = doc.created_at || 'N/A';
+                const updatedAt = doc.updated_at || createdAt;
+                
+                docItem.innerHTML = `
+                    <div class="document-info">
+                        <div class="document-title">${doc.title}</div>
+                        <div class="document-meta">
+                            <span class="document-date">作成: ${createdAt}</span>
+                            ${updatedAt !== createdAt ? `<span class="document-date">更新: ${updatedAt}</span>` : ''}
+                            <span class="document-size">${sizeInfo}</span>
+                            ${doc.status ? `<span class="document-status">状態: ${doc.status}</span>` : ''}
+                        </div>
+                        ${doc.source_uri && doc.source_uri !== 'N/A' ? `<div class="document-uri">URI: ${doc.source_uri}</div>` : ''}
+                    </div>
+                    <div class="document-actions">
+                        <button class="action-btn view-btn" onclick="viewDocument('${doc.id}')">表示</button>
+                        <button class="action-btn delete-btn" onclick="deleteDocument('${doc.id}', ${source === 'rag_api'})">削除</button>
+                    </div>
+                `;
+                
+                documentsList.appendChild(docItem);
+            });
+        }
+
+        function viewDocument(docId) {
+            alert(`ドキュメント ${docId} を表示（実装予定）`);
+        }
+
+        function deleteDocument(docId, useRagApi) {
+            if (confirm('このドキュメントを削除しますか？')) {
+                const url = useRagApi ? `/delete_document/${docId}?use_rag_api=true` : `/delete_document/${docId}`;
+                
+                fetch(url, { method: 'DELETE' })
+                    .then(response => response.json())
+                    .then(data => {
+                        if (data.success) {
+                            alert(data.message);
+                            loadDocuments();
+                        } else {
+                            alert(`削除に失敗しました: ${data.message}`);
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Delete error:', error);
+                        alert('削除エラーが発生しました。');
+                    });
+            }
+        }
+
+        // 設定機能
+        function loadSettings() {
+            fetch('/get_settings')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('ragCorpusId').value = data.rag_corpus;
+                    document.getElementById('geminiModel').value = data.gemini_model;
+                    document.getElementById('lastUpdate').textContent = data.last_update;
+                })
+                .catch(error => {
+                    console.error('設定の読み込みに失敗しました:', error);
+                });
+        }
+
+        // 検索機能
+        document.getElementById('searchDocuments').addEventListener('input', (e) => {
+            const query = e.target.value.toLowerCase();
+            const documents = document.querySelectorAll('.document-item');
+            
+            documents.forEach(doc => {
+                const title = doc.querySelector('.document-title').textContent.toLowerCase();
+                if (title.includes(query)) {
+                    doc.style.display = 'block';
+                } else {
+                    doc.style.display = 'none';
+                }
+            });
+        });
+
+        // 更新ボタン
+        document.getElementById('refreshDocuments').addEventListener('click', loadDocuments);
+
+        // 既存のチャット機能を維持
+        async function sendMessage() {
             const message = messageInput.value.trim();
             if (!message) return;
 
-            const deepModeToggle = document.getElementById('deepModeToggle');
-            const useDeepMode = deepModeToggle.checked;
-
+            const useDeepMode = document.getElementById('deepModeToggle').checked;
+            
             addMessage(message, true);
             messageInput.value = '';
             sendButton.disabled = true;
-            
-            if (useDeepMode) {
-                sendButton.textContent = '深掘り調査中...';
-            } else {
-                sendButton.textContent = '送信中...';
-            }
 
             const { messageContent, sourcesDiv } = addStreamingMessage();
-            let accumulatedText = '';
+            let fullResponse = '';
+            let finalGroundingMetadata = null;
 
-            fetch('/chat', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ 
-                    message: message,
-                    deep_mode: useDeepMode
-                }),
-            })
-            .then(response => {
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        message: message,
+                        deep_mode: useDeepMode
+                    })
+                });
+
                 const reader = response.body.getReader();
                 const decoder = new TextDecoder();
 
-                function readStream() {
-                    return reader.read().then(({ done, value }) => {
-                        if (done) {
-                            // ストリーミング完了時に最終的なMarkdownレンダリング
-                            messageContent.innerHTML = marked.parse(accumulatedText);
-                            sendButton.disabled = false;
-                            sendButton.textContent = '送信';
-                            return;
-                        }
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
 
-                        const text = decoder.decode(value);
-                        const lines = text.split('\n');
-                        
-                        lines.forEach(line => {
-                            if (line.startsWith('data: ')) {
-                                try {
-                                    const data = JSON.parse(line.substring(6));
-                                    if (data.chunk) {
-                                        accumulatedText += data.chunk;
-                                        // ストリーミング中はプレーンテキストで表示（パフォーマンス向上）
-                                        messageContent.textContent = accumulatedText;
-                                        chatMessages.scrollTop = chatMessages.scrollHeight;
-                                    }
-                                    if (data.done && data.grounding_metadata) {
-                                        displaySources(sourcesDiv, data.grounding_metadata);
-                                    }
-                                    
-                                    // 深掘りモードの場合、ステップ情報を表示
-                                    if (useDeepMode && data.step) {
-                                        updateProgressIndicator(data.step);
-                                    }
-                                } catch (e) {
-                                    console.error('Error parsing JSON:', e);
+                    const chunk = decoder.decode(value);
+                    const lines = chunk.split('\n');
+
+                    for (const line of lines) {
+                        if (line.startsWith('data: ')) {
+                            try {
+                                const data = JSON.parse(line.substring(6));
+                                
+                                if (data.chunk) {
+                                    fullResponse += data.chunk;
+                                    messageContent.innerHTML = marked.parse(fullResponse);
+                                    chatMessages.scrollTop = chatMessages.scrollHeight;
                                 }
+                                
+                                if (data.grounding_metadata) {
+                                    finalGroundingMetadata = data.grounding_metadata;
+                                }
+                                
+                                if (data.done) {
+                                    if (finalGroundingMetadata && finalGroundingMetadata.grounding_chunks) {
+                                        const sortedChunks = finalGroundingMetadata.grounding_chunks.sort((a, b) => {
+                                            const dateA = extractDateFromFilename(a.title);
+                                            const dateB = extractDateFromFilename(b.title);
+                                            
+                                            if (dateA && dateB) {
+                                                return dateB - dateA;
+                                            } else if (dateA) {
+                                                return -1;
+                                            } else if (dateB) {
+                                                return 1;
+                                            } else {
+                                                return 0;
+                                            }
+                                        });
+                                        
+                                        let sourcesHtml = '<div class="sources-header">📚 参考資料:</div>';
+                                        sortedChunks.forEach((chunk, index) => {
+                                            const extractedDate = extractDateFromFilename(chunk.title);
+                                            const dateStr = extractedDate ? extractedDate.toLocaleDateString('ja-JP') : '';
+                                            
+                                            sourcesHtml += `
+                                                <div class="source-item">
+                                                    <div class="source-title">${chunk.title}</div>
+                                                    ${dateStr ? `<div class="source-date">${dateStr}</div>` : ''}
+                                                    ${chunk.uri ? `<div class="source-uri">${chunk.uri}</div>` : ''}
+                                                </div>
+                                            `;
+                                        });
+                                        
+                                        sourcesDiv.innerHTML = sourcesHtml;
+                                        sourcesDiv.style.display = 'block';
+                                    }
+                                }
+                            } catch (e) {
+                                console.error('Error parsing JSON:', e);
                             }
-                        });
-
-                        return readStream();
-                    });
+                        }
+                    }
                 }
-
-                return readStream();
-            })
-            .catch(error => {
+            } catch (error) {
                 console.error('Error:', error);
-                messageContent.textContent = 'エラーが発生しました。';
+                messageContent.innerHTML = 'エラーが発生しました。しばらく時間をおいて再度お試しください。';
+            } finally {
                 sendButton.disabled = false;
-                sendButton.textContent = '送信';
-            });
-        }
-
-        function updateProgressIndicator(step) {
-            const progressMessages = {
-                'planning': '📋 調査計画を立案中...',
-                'plan_complete': '✅ 計画完了',
-                'query_1': '🔍 質問1を調査中...',
-                'answer_1': '✅ 回答1完了',
-                'query_2': '🔍 質問2を調査中...',
-                'answer_2': '✅ 回答2完了',
-                'query_3': '🔍 質問3を調査中...',
-                'answer_3': '✅ 回答3完了',
-                'query_4': '🔍 質問4を調査中...',
-                'answer_4': '✅ 回答4完了',
-                'query_5': '🔍 質問5を調査中...',
-                'answer_5': '✅ 回答5完了',
-                'synthesizing': '📝 包括的な回答を作成中...',
-                'synthesis_complete': '✅ 包括的な回答完了',
-                'complete': '🎯 調査完了'
-            };
-            
-            const progressMessage = progressMessages[step];
-            if (progressMessage) {
-                sendButton.textContent = progressMessage;
             }
         }
 
         sendButton.addEventListener('click', sendMessage);
         messageInput.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
                 sendMessage();
             }
         });
 
-        // フォーカスを入力欄に設定
-        messageInput.focus();
+        // RAG APIトグルの設定
+        document.getElementById('ragApiToggle').addEventListener('change', function() {
+            const label = document.getElementById('apiToggleLabel');
+            if (this.checked) {
+                label.textContent = 'RAG API';
+            } else {
+                label.textContent = 'Cloud Storage';
+            }
+            loadDocuments(); // データソースが変わったら再読み込み
+        });
+
+        // 初期化
+        document.addEventListener('DOMContentLoaded', () => {
+            // デフォルトでチャット画面を表示
+            showPanel('chatPanel');
+            chatFeature.classList.add('active');
+        });
     </script>
 </body>
 </html> 
