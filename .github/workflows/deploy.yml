@@ -44,10 +44,13 @@ jobs:
           --platform managed \
           --allow-unauthenticated \
           --memory 2Gi \
-          --cpu 2 \
+          --cpu 1 \
           --timeout 3600 \
+          --max-instances 5 \
+          --concurrency 40 \
           --set-env-vars "GOOGLE_CLOUD_PROJECT=${{ env.PROJECT_ID }}" \
-          --set-env-vars "GEMINI_MODEL=gemini-2.5-flash"
+          --set-env-vars "GEMINI_MODEL=gemini-2.5-flash" \
+          --set-env-vars "RAG_CORPUS=projects/${{ env.PROJECT_ID }}/locations/us-central1/ragCorpora/5188146770730811392"
     
     - name: Show Service URL
       run: |

@@ -551,15 +551,26 @@ def synthesize_comprehensive_answer(user_message, plan_text, qa_results):
         )
     ]
     
-    config = create_generate_config(temperature=0.7, include_tools=False)
+    # RAGツールを使用して包括的回答を生成
+    config = create_generate_config(temperature=0.7, include_tools=True)
     
-    response = client.models.generate_content(
-        model=GEMINI_MODEL,
-        contents=contents,
-        config=config,
-    )
-    
-    return response.text
+    try:
+        response = client.models.generate_content(
+            model=GEMINI_MODEL,
+            contents=contents,
+            config=config,
+        )
+        
+        if response.text:
+            return response.text
+        else:
+            # RAGツールが失敗した場合のフォールバック
+            return f"## 🎯 包括的な回答\n\n{qa_text}\n\n*注: 上記の調査結果を基にした包括的な回答です。*"
+            
+    except Exception as e:
+        print(f"Error in synthesize_comprehensive_answer: {e}")
+        # エラー時のフォールバック
+        return f"## 🎯 包括的な回答\n\n{qa_text}\n\n*注: 上記の調査結果を基にした包括的な回答です。*"
 
 def generate_deep_response(user_message, generate_questions=False):
     """深掘り機能付きのレスポンス生成"""
@@ -625,56 +636,74 @@ def generate_deep_response(user_message, generate_questions=False):
                 'step': f'query_{i}'
             }
             
-            answer, grounding_metadata = execute_single_rag_query(question)
-            qa_results.append((question, answer))
-            
-            # 出典情報を処理
-            converted_metadata = None
-            if grounding_metadata:
-                all_grounding_metadata.append(grounding_metadata)
-                converted_metadata = convert_grounding_metadata_to_dict(grounding_metadata)
+            try:
+                answer, grounding_metadata = execute_single_rag_query(question)
                 
-                # 出典情報を統合（重複を避ける）
+                # 回答が空またはエラーの場合のフォールバック
+                if not answer or "エラー" in answer or "取得できません" in answer:
+                    answer = f"この質問についての詳細な情報は現在の資料からは見つかりませんでした。"
+                
+                qa_results.append((question, answer))
+                
+                # 出典情報を処理
+                converted_metadata = None
+                if grounding_metadata:
+                    all_grounding_metadata.append(grounding_metadata)
+                    converted_metadata = convert_grounding_metadata_to_dict(grounding_metadata)
+                    
+                    # 出典情報を統合（重複を避ける）
+                    if converted_metadata and 'grounding_chunks' in converted_metadata:
+                        for chunk in converted_metadata['grounding_chunks']:
+                            if chunk.get('uri'):
+                                all_unique_sources[chunk['uri']] = {
+                                    'title': chunk.get('title', 'タイトルなし'),
+                                    'uri': chunk['uri']
+                                }
+                
+                # 回答を送信
+                yield {
+                    'chunk': f'\n**💡 回答 {i}:** {answer}\n',
+                    'done': False,
+                    'grounding_metadata': converted_metadata,
+                    'step': f'answer_{i}'
+                }
+                
+                # 各質問の出典情報を個別に表示
                 if converted_metadata and 'grounding_chunks' in converted_metadata:
-                    for chunk in converted_metadata['grounding_chunks']:
-                        if chunk.get('uri'):
-                            all_unique_sources[chunk['uri']] = {
-                                'title': chunk.get('title', 'タイトルなし'),
-                                'uri': chunk['uri']
-                            }
-            
-            # 回答を送信
-            yield {
-                'chunk': f'\n**💡 回答 {i}:** {answer}\n',
-                'done': False,
-                'grounding_metadata': converted_metadata,
-                'step': f'answer_{i}'
-            }
-            
-            # 各質問の出典情報を個別に表示
-            if converted_metadata and 'grounding_chunks' in converted_metadata:
-                # 出典情報を日付順にソート
-                sorted_chunks = sort_sources_by_date(converted_metadata['grounding_chunks'])
-                
-                sources_text = '\n**📚 この回答の出典:**\n'
-                for j, chunk in enumerate(sorted_chunks, 1):
-                    title = chunk.get('title', 'タイトルなし')
-                    uri = chunk.get('uri', '')
+                    # 出典情報を日付順にソート
+                    sorted_chunks = sort_sources_by_date(converted_metadata['grounding_chunks'])
                     
-                    # 日付情報を表示に含める
-                    extracted_date = extract_date_from_filename(title)
-                    date_info = f" ({extracted_date.strftime('%Y-%m-%d')})" if extracted_date else ""
+                    sources_text = '\n**📚 この回答の出典:**\n'
+                    for j, chunk in enumerate(sorted_chunks, 1):
+                        title = chunk.get('title', 'タイトルなし')
+                        uri = chunk.get('uri', '')
+                        
+                        # 日付情報を表示に含める
+                        extracted_date = extract_date_from_filename(title)
+                        date_info = f" ({extracted_date.strftime('%Y-%m-%d')})" if extracted_date else ""
+                        
+                        sources_text += f'   {j}. {title}{date_info}\n'
+                        if uri:
+                            sources_text += f'      📎 {uri}\n'
+                    sources_text += '\n'
                     
-                    sources_text += f'   {j}. {title}{date_info}\n'
-                    if uri:
-                        sources_text += f'      📎 {uri}\n'
-                sources_text += '\n'
+                    yield {
+                        'chunk': sources_text,
+                        'done': False,
+                        'grounding_metadata': None,
+                        'step': f'sources_{i}'
+                    }
+                    
+            except Exception as e:
+                print(f"Error in query {i}: {e}")
+                error_answer = f"この質問の処理中にエラーが発生しました: {str(e)}"
+                qa_results.append((question, error_answer))
                 
                 yield {
-                    'chunk': sources_text,
+                    'chunk': f'\n**⚠️ 回答 {i}:** {error_answer}\n',
                     'done': False,
                     'grounding_metadata': None,
-                    'step': f'sources_{i}'
+                    'step': f'error_{i}'
                 }
         
         # ステップ3: 包括的な回答の統合
