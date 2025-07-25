@@ -31,6 +31,11 @@
                         <span class="toggle-slider"></span>
                         <span class="toggle-label">深掘りモード</span>
                     </label>
+                    <label class="toggle-switch" id="questionGenerationToggle" style="display: none; margin-left: 20px;">
+                        <input type="checkbox" id="generateQuestionsToggle">
+                        <span class="toggle-slider"></span>
+                        <span class="toggle-label">関連質問を生成</span>
+                    </label>
                 </div>
                 <div class="chat-input">
                     <input type="text" id="messageInput" placeholder="メッセージを入力してください..." />
@@ -177,7 +182,9 @@
             if (!message) return;
 
             const deepModeToggle = document.getElementById('deepModeToggle');
+            const generateQuestionsToggle = document.getElementById('generateQuestionsToggle');
             const useDeepMode = deepModeToggle.checked;
+            const generateQuestions = generateQuestionsToggle.checked;
 
             addMessage(message, true);
             messageInput.value = '';
@@ -199,7 +206,8 @@
                 },
                 body: JSON.stringify({ 
                     message: message,
-                    deep_mode: useDeepMode
+                    deep_mode: useDeepMode,
+                    generate_questions: generateQuestions
                 }),
             })
             .then(response => {
@@ -286,6 +294,18 @@
         messageInput.addEventListener('keypress', (e) => {
             if (e.key === 'Enter') {
                 sendMessage();
+            }
+        });
+
+        // 深掘りモードの状態変更時に関連質問生成ボタンの表示/非表示を制御
+        document.getElementById('deepModeToggle').addEventListener('change', function() {
+            const questionGenerationToggle = document.getElementById('questionGenerationToggle');
+            if (this.checked) {
+                questionGenerationToggle.style.display = 'inline-flex';
+            } else {
+                questionGenerationToggle.style.display = 'none';
+                // 深掘りモードが無効になったら関連質問生成も無効にする
+                document.getElementById('generateQuestionsToggle').checked = false;
             }
         });
 
