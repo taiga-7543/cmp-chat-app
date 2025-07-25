@@ -1,0 +1,54 @@
+# Cloud Functions デプロイ設定
+
+# main.py (Cloud Functions用)
+functions:
+  drive-webhook-handler:
+    runtime: python39
+    entry_point: handle_drive_webhook
+    trigger:
+      http_trigger:
+        security_level: SECURE_ALWAYS
+    environment_variables:
+      GOOGLE_CLOUD_PROJECT: "your-project-id"
+      GOOGLE_APPLICATION_CREDENTIALS_JSON: "your-service-account-json"
+      CLOUD_STORAGE_BUCKET: "your-sync-bucket"
+      RAG_CORPUS_NAME: "Drive Sync Corpus"
+    
+  drive-sync-processor:
+    runtime: python39
+    entry_point: process_drive_sync
+    trigger:
+      pubsub_trigger:
+        topic: "drive-sync-events"
+    environment_variables:
+      GOOGLE_CLOUD_PROJECT: "your-project-id"
+      GOOGLE_APPLICATION_CREDENTIALS_JSON: "your-service-account-json"
+      CLOUD_STORAGE_BUCKET: "your-sync-bucket"
+
+# requirements.txt (Cloud Functions用)
+dependencies:
+  - google-cloud-functions-framework>=3.0.0
+  - google-api-python-client>=2.0.0
+  - google-auth>=2.0.0
+  - google-cloud-storage>=2.0.0
+  - google-cloud-aiplatform>=1.38.0
+  - google-genai>=0.4.0
+
+# デプロイコマンド例
+deploy_commands:
+  webhook_handler: |
+    gcloud functions deploy drive-webhook-handler \
+      --runtime python39 \
+      --trigger-http \
+      --allow-unauthenticated \
+      --entry-point handle_drive_webhook \
+      --source . \
+      --set-env-vars GOOGLE_CLOUD_PROJECT=your-project-id
+
+  sync_processor: |
+    gcloud functions deploy drive-sync-processor \
+      --runtime python39 \
+      --trigger-topic drive-sync-events \
+      --entry-point process_drive_sync \
+      --source . \
+      --set-env-vars GOOGLE_CLOUD_PROJECT=your-project-id

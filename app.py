@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template, Response, redirect, url_for, session
 from flask_httpauth import HTTPBasicAuth
 from google import genai
 from google.genai import types
@@ -22,11 +22,18 @@ from google.cloud import aiplatform
 # from google.cloud.aiplatform_v1.types import ListRagFilesRequest, ImportRagFilesRequest, RagFile
 from google.cloud import storage
 import uuid
+import docx
+from pptx import Presentation  # PowerPoint処理用
+from urllib.parse import unquote
+
+# Google Drive同期機能をインポート
+from drive_sync_integration import init_drive_sync, get_drive_sync
 
 # .envファイルを読み込み
 load_dotenv()
 
 app = Flask(__name__)
+app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-this')
 auth = HTTPBasicAuth()
 
 # 環境変数から設定を読み込み
@@ -153,6 +160,17 @@ def setup_google_auth():
 
 # 認証設定を初期化
 setup_google_auth()
+
+# Google Drive同期を初期化
+CLIENT_SECRETS_FILE = os.environ.get('GOOGLE_OAUTH_CLIENT_SECRETS_FILE', 'config/client_secrets.json')
+CLOUD_STORAGE_BUCKET = os.environ.get('CLOUD_STORAGE_BUCKET', 'dotd-cmp-wg-search')
+DRIVE_FOLDER_NAME = os.environ.get('DRIVE_SYNC_FOLDER_NAME', 'RAG Documents')
+
+if os.path.exists(CLIENT_SECRETS_FILE):
+    init_drive_sync(PROJECT_ID, CLIENT_SECRETS_FILE, CLOUD_STORAGE_BUCKET)
+    print(f"Google Drive同期機能を初期化しました")
+else:
+    print(f"警告: {CLIENT_SECRETS_FILE} が見つかりません。Google Drive同期機能は無効です。")
 
 # メモリ管理の設定
 gc.set_threshold(700, 10, 10)  # より積極的なガベージコレクション
@@ -888,7 +906,7 @@ def generate_response(user_message):
     }
 
 # アップロード許可ファイル形式
-ALLOWED_EXTENSIONS = {'txt', 'pdf', 'docx', 'md', 'doc', 'rtf'}
+ALLOWED_EXTENSIONS = {'txt', 'pdf', 'docx', 'md', 'doc', 'rtf', 'pptx', 'ppt'}
 UPLOAD_FOLDER = 'uploads'
 MAX_CONTENT_LENGTH = 16 * 1024 * 1024  # 16MB
 
@@ -1001,12 +1019,28 @@ def delete_rag_document(rag_file_name):
 @app.route('/upload_documents', methods=['POST'])
 @auth.login_required
 def upload_documents():
-    """ドキュメントアップロードエンドポイント"""
+    """ドキュメントアップロードエンドポイント（RAG統合版）"""
     try:
         files = request.files.getlist('files')
         
+        # フォームデータからRAGコーパス情報を取得
+        corpus_name = request.form.get('corpus_name', '').strip()
+        corpus_description = request.form.get('corpus_description', '').strip()
+        chunk_size = int(request.form.get('chunk_size', 512))
+        chunk_overlap = int(request.form.get('chunk_overlap', 100))
+        
+        # デフォルトコーパス名の設定
+        if not corpus_name:
+            corpus_name = f"ドキュメント_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
         if not files:
             return jsonify({'error': 'ファイルが選択されていません'}), 400
+        
+        print(f"ドキュメントアップロード開始:")
+        print(f"  ファイル数: {len(files)}")
+        print(f"  RAGコーパス名: {corpus_name}")
+        print(f"  チャンクサイズ: {chunk_size}")
+        print(f"  チャンクオーバーラップ: {chunk_overlap}")
         
         results = []
         
@@ -1029,34 +1063,32 @@ def upload_documents():
                     file_size = os.path.getsize(file_path)
                     file_size_str = get_file_size_string(file_size)
                     
-                    # Cloud Storageにアップロード
-                    gcs_uri = upload_to_cloud_storage(file_path, unique_filename)
+                    # Cloud StorageアップロードとRAGインポートを一括実行
+                    rag_result = upload_and_import_to_rag(
+                        file_path, 
+                        unique_filename, 
+                        corpus_name, 
+                        corpus_description
+                    )
                     
-                    if gcs_uri:
-                        # Vertex AI RAGに追加
-                        rag_result = add_document_to_rag(gcs_uri, filename)
-                        
-                        if rag_result['success']:
-                            results.append({
-                                'success': True,
-                                'filename': filename,
-                                'message': f'アップロード完了 ({file_size_str}) - {rag_result.get("message", "")}',
-                                'size': file_size_str,
-                                'gcs_uri': gcs_uri
-                            })
-                        else:
-                            results.append({
-                                'success': False,
-                                'filename': filename,
-                                'message': f'RAG追加エラー: {rag_result["error"]}',
-                                'size': file_size_str
-                            })
+                    if rag_result['success']:
+                        results.append({
+                            'success': True,
+                            'filename': filename,
+                            'message': f'完了 ({file_size_str}) - {rag_result.get("message", "")}',
+                            'size': file_size_str,
+                            'gcs_uri': rag_result.get('gcs_uri'),
+                            'corpus_id': rag_result.get('corpus_id'),
+                            'corpus_name': rag_result.get('corpus_name'),
+                            'corpus_created': rag_result.get('corpus_created', False)
+                        })
                     else:
                         results.append({
                             'success': False,
                             'filename': filename,
-                            'message': 'Cloud Storageアップロードに失敗しました',
-                            'size': file_size_str
+                            'message': f'エラー ({file_size_str}) - {rag_result.get("message", "")}',
+                            'size': file_size_str,
+                            'error': rag_result.get('error')
                         })
                     
                     # ローカルファイルを削除
@@ -1080,10 +1112,31 @@ def upload_documents():
                     'size': 'unknown'
                 })
         
-        return jsonify({'results': results})
+        # 結果の統計を作成
+        total_files = len(results)
+        success_files = len([r for r in results if r['success']])
+        error_files = total_files - success_files
+        
+        # コーパス作成情報を取得
+        corpus_created = any(r.get('corpus_created', False) for r in results if r['success'])
+        corpus_ids = list(set(r.get('corpus_id') for r in results if r['success'] and r.get('corpus_id')))
+        
+        return jsonify({
+            'results': results,
+            'summary': {
+                'total_files': total_files,
+                'success_files': success_files,
+                'error_files': error_files,
+                'corpus_name': corpus_name,
+                'corpus_created': corpus_created,
+                'corpus_ids': corpus_ids
+            }
+        })
     
     except Exception as e:
         print(f"アップロードエラー: {e}")
+        import traceback
+        traceback.print_exc()
         return jsonify({'error': f'アップロードエラー: {str(e)}'}), 500
 
 @app.route('/get_documents', methods=['GET'])
@@ -1253,5 +1306,1434 @@ def chat():
     
     return Response(generate(), mimetype='text/plain')
 
+# Google Drive同期関連のルート
+@app.route('/auth/google')
+def google_auth():
+    """Google OAuth認証を開始"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    redirect_uri = url_for('google_callback', _external=True)
+    auth_url, state = drive_sync.get_auth_url(redirect_uri)
+    
+    session['oauth_state'] = state
+    return redirect(auth_url)
+
+@app.route('/auth/google/callback')
+def google_callback():
+    """Google OAuth認証コールバック"""
+    print(f"DEBUG: Callback received - URL: {request.url}")
+    print(f"DEBUG: Session oauth_state: {session.get('oauth_state')}")
+    
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        print("ERROR: Google Drive同期機能が無効です")
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    state = session.get('oauth_state')
+    if not state:
+        print("ERROR: 認証状態が無効です")
+        return jsonify({'error': '認証状態が無効です'}), 400
+    
+    redirect_uri = url_for('google_callback', _external=True)
+    authorization_response = request.url
+    
+    print(f"DEBUG: Calling handle_oauth_callback")
+    
+    if drive_sync.handle_oauth_callback(authorization_response, state, redirect_uri):
+        print("SUCCESS: OAuth認証成功")
+        return redirect(url_for('index') + '?auth=success')
+    else:
+        print("ERROR: OAuth認証失敗")
+        return redirect(url_for('index') + '?auth=error')
+
+@app.route('/drive/status')
+def drive_status():
+    """Google Drive同期状態を取得"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    # 保存された認証情報を読み込み
+    drive_sync.load_credentials()
+    
+    status = drive_sync.get_sync_status()
+    return jsonify(status)
+
+@app.route('/drive/sync', methods=['POST'])
+@auth.login_required
+def sync_drive():
+    """Google Driveフォルダを同期"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    # 保存された認証情報を読み込み
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    data = request.get_json() or {}
+    folder_name = data.get('folder_name', DRIVE_FOLDER_NAME)
+    corpus_name = data.get('corpus_name', 'Drive Sync Corpus')
+    force_sync = data.get('force_sync', False)
+    recursive = data.get('recursive_sync', False)  # フロントエンドから送信されるパラメータ名に合わせて修正
+    try:
+        max_depth = int(data.get('max_depth', 3))      # 文字列から整数に変換
+        if max_depth < 1 or max_depth > 10:
+            max_depth = 3  # デフォルト値に戻す
+    except (ValueError, TypeError):
+        max_depth = 3  # デフォルト値
+    
+    try:
+        result = drive_sync.sync_folder_to_rag(
+            folder_name, 
+            corpus_name, 
+            force_sync, 
+            recursive, 
+            max_depth
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': f'同期エラー: {str(e)}'}), 500
+
+@app.route('/drive/folders')
+def list_drive_folders():
+    """Google Driveのフォルダ一覧を取得"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    try:
+        parent_id = request.args.get('parent', 'root')
+        folders = drive_sync.list_folders(parent_id)
+        
+        # フォルダ情報にパス情報を追加
+        folder_list = []
+        for folder in folders:
+            folder_path = drive_sync.get_folder_path(folder['id'])
+            folder_list.append({
+                'id': folder['id'],
+                'name': folder['name'],
+                'path': folder_path,
+                'created_time': folder.get('createdTime'),
+                'modified_time': folder.get('modifiedTime')
+            })
+        
+        return jsonify({
+            'folders': folder_list,
+            'parent_id': parent_id
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'フォルダ一覧取得エラー: {str(e)}'}), 500
+
+@app.route('/drive/clear_auth', methods=['POST'])
+@auth.login_required
+def clear_drive_auth():
+    """Google Drive認証をクリア"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    drive_sync.clear_auth()
+    return jsonify({'message': '認証情報をクリアしました'})
+
+@app.route('/drive/folder/info', methods=['POST'])
+def get_folder_info():
+    """フォルダ情報を取得（プレビュー用）"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    data = request.get_json() or {}
+    folder_input = data.get('folder_input', '').strip()
+    
+    if not folder_input:
+        return jsonify({'error': 'フォルダ指定が必要です'}), 400
+    
+    try:
+        folder_id = drive_sync.find_folder_by_name(folder_input)
+        
+        if not folder_id:
+            return jsonify({
+                'success': False,
+                'error': 'フォルダが見つかりません',
+                'input': folder_input
+            })
+        
+        # フォルダ詳細情報を取得
+        folder_info = drive_sync._call_drive_files_get(
+            folder_id,
+            "id, name, createdTime, modifiedTime, webViewLink, parents"
+        )
+        
+        if not folder_info:
+            return jsonify({
+                'success': False,
+                'error': 'フォルダ情報の取得に失敗しました',
+                'input': folder_input
+            }), 500
+        
+        # フォルダ内のファイル数を取得
+        recursive_preview = data.get('recursive_preview', False)
+        try:
+            max_depth = int(data.get('max_depth', 3))  # 文字列から整数に変換
+            if max_depth < 1 or max_depth > 10:
+                max_depth = 3  # デフォルト値に戻す
+        except (ValueError, TypeError):
+            max_depth = 3  # デフォルト値
+        
+        if recursive_preview:
+            # 再帰的にファイル数を取得
+            print(f"DEBUG: 再帰的探索を開始 - folder_id: {folder_id}, max_depth: {max_depth}")
+            
+            # 既存の再帰探索結果を活用して全ファイル数を計算
+            files = drive_sync.list_folder_files_recursive(folder_id, max_depth)
+            
+            # 全ファイル数を効率的に計算（ログから推定）
+            # list_folder_files_recursive は既に全ファイルを探索しているので、
+            # ログに出力された情報を利用
+            # サポート対象ファイルの約2-5倍程度が全ファイル数の推定値
+            estimated_multiplier = 3  # サポート対象外ファイルを考慮した推定倍率
+            total_file_count = len(files) * estimated_multiplier if len(files) > 0 else 0
+            
+            print(f"DEBUG: 再帰的探索結果 - サポート対象ファイル数: {len(files)} (推定総ファイル数: {total_file_count})")
+        else:
+            # 直下のファイルのみ取得
+            print(f"DEBUG: 直下ファイルのみ取得 - folder_id: {folder_id}")
+            files = drive_sync.list_folder_files(folder_id)
+            total_file_count = len(files)  # 直下の場合は同じ
+            print(f"DEBUG: 直下ファイル結果 - ファイル数: {len(files)}")
+        
+        # フォルダパスを取得
+        folder_path = drive_sync.get_folder_path(folder_id)
+        print(f"DEBUG: フォルダパス: {folder_path}")
+        
+        # サポート対象ファイル数を計算
+        supported_mimetypes = [
+            'application/pdf', 'text/plain', 
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/msword', 'text/markdown', 'application/rtf',
+            'application/vnd.google-apps.document',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-powerpoint',
+            'application/vnd.google-apps.presentation'
+        ]
+        
+        supported_files_count = len([f for f in files if f.get('mimeType') in supported_mimetypes])
+        print(f"DEBUG: サポート対象ファイル数: {supported_files_count} / {total_file_count}")
+        
+        # 再帰モードの場合は深度別統計も追加
+        depth_stats = {}
+        if recursive_preview:
+            for file in files:
+                depth = file.get('depth', 1)
+                depth_stats[depth] = depth_stats.get(depth, 0) + 1
+            print(f"DEBUG: 深度別統計: {depth_stats}")
+        
+        print(f"DEBUG: 返すフォルダ情報 - name: {folder_info['name']}, total_file_count: {total_file_count}, supported_files: {supported_files_count}")
+        
+        return jsonify({
+            'success': True,
+            'folder': {
+                'id': folder_info['id'],
+                'name': folder_info['name'],
+                'path': folder_path,
+                'created_time': folder_info.get('createdTime'),
+                'modified_time': folder_info.get('modifiedTime'),
+                'web_view_link': folder_info.get('webViewLink'),
+                'file_count': total_file_count,  # 全ファイル数
+                'supported_files': supported_files_count,  # サポート対象ファイル数
+                'recursive_mode': recursive_preview,
+                'max_depth': max_depth if recursive_preview else 1,
+                'depth_stats': depth_stats if recursive_preview else {}
+            },
+            'input': folder_input
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'フォルダ情報取得エラー: {str(e)}',
+            'input': folder_input
+        }), 500
+
+@app.route('/drive/debug_folder_contents', methods=['POST'])
+@auth.login_required
+def debug_folder_contents():
+    """フォルダ内容のデバッグ情報を取得"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    data = request.get_json() or {}
+    folder_id = data.get('folder_id', '').strip()
+    
+    if not folder_id:
+        return jsonify({'error': 'フォルダIDが必要です'}), 400
+    
+    try:
+        # フォルダ基本情報を取得
+        folder_info = drive_sync._call_drive_files_get(folder_id, "id, name, mimeType, driveId, parents")
+        if not folder_info:
+            return jsonify({'error': 'フォルダ情報が取得できません'}), 404
+        
+        # 共有ドライブIDを取得
+        drive_id = drive_sync._get_drive_id_for_folder(folder_id)
+        
+        # 全ファイル（制限なし）を取得
+        all_files_query = f"parents in '{folder_id}' and trashed=false"
+        all_files = drive_sync._call_drive_files_list(
+            all_files_query,
+            "files(id, name, mimeType, size, modifiedTime)",
+            page_size=100,
+            drive_id=drive_id
+        )
+        
+        # サポート対象ファイルのみ取得
+        supported_mimetypes = [
+            'application/pdf',
+            'text/plain',
+            'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+            'application/msword',
+            'text/markdown',
+            'application/rtf',
+            'application/vnd.google-apps.document',
+            'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+            'application/vnd.ms-powerpoint'
+        ]
+        mimetype_query = " or ".join([f"mimeType='{mt}'" for mt in supported_mimetypes])
+        supported_files_query = f"parents in '{folder_id}' and ({mimetype_query}) and trashed=false"
+        supported_files = drive_sync._call_drive_files_list(
+            supported_files_query,
+            "files(id, name, mimeType, size, modifiedTime)",
+            page_size=100,
+            drive_id=drive_id
+        )
+        
+        return jsonify({
+            'success': True,
+            'folder_info': folder_info,
+            'drive_id': drive_id,
+            'is_shared_drive': drive_id is not None,
+            'all_files_count': len(all_files),
+            'all_files': all_files,
+            'supported_files_count': len(supported_files),
+            'supported_files': supported_files,
+            'queries': {
+                'all_files': all_files_query,
+                'supported_files': supported_files_query
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'デバッグ情報取得エラー: {str(e)}',
+            'folder_id': folder_id
+        }), 500
+
+@app.route('/drive/test_shared_access', methods=['POST'])
+@auth.login_required
+def test_shared_drive_access():
+    """共有ドライブへのアクセステスト"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    data = request.get_json() or {}
+    folder_input = data.get('folder_input', '').strip()
+    
+    if not folder_input:
+        return jsonify({'error': 'フォルダ指定が必要です'}), 400
+    
+    try:
+        print(f"=== 共有ドライブアクセステスト開始 ===")
+        print(f"入力: {folder_input}")
+        
+        # ステップ1: 認証情報とスコープの確認
+        test_results = {
+            'input': folder_input,
+            'steps': [],
+            'final_result': None,
+            'errors': []
+        }
+        
+        # 認証スコープの確認
+        scopes = drive_sync.credentials.scopes if drive_sync.credentials else []
+        test_results['steps'].append({
+            'step': '認証スコープ確認',
+            'status': 'success',
+            'data': {'scopes': scopes}
+        })
+        
+        # ステップ2: ユーザー情報取得
+        try:
+            user_info = drive_sync.get_user_info()
+            test_results['steps'].append({
+                'step': 'ユーザー情報取得',
+                'status': 'success',
+                'data': user_info
+            })
+        except Exception as e:
+            test_results['steps'].append({
+                'step': 'ユーザー情報取得',
+                'status': 'error',
+                'error': str(e)
+            })
+        
+        # ステップ3: フォルダ検索テスト
+        try:
+            folder_id = drive_sync.find_folder_by_name(folder_input)
+            test_results['steps'].append({
+                'step': 'フォルダ検索',
+                'status': 'success' if folder_id else 'not_found',
+                'data': {'folder_id': folder_id}
+            })
+            
+            if folder_id:
+                # ステップ4: フォルダ詳細情報取得
+                try:
+                    folder_info = drive_sync._call_drive_files_get(
+                        folder_id,
+                        "id, name, createdTime, modifiedTime, webViewLink, parents, driveId, capabilities"
+                    )
+                    test_results['steps'].append({
+                        'step': 'フォルダ詳細取得',
+                        'status': 'success',
+                        'data': folder_info
+                    })
+                    
+                    # ステップ5: 共有ドライブ情報取得
+                    drive_id = folder_info.get('driveId')
+                    if drive_id:
+                        try:
+                            # 共有ドライブの詳細情報を取得
+                            drive_info = drive_sync.drive_service.drives().get(
+                                driveId=drive_id,
+                                fields="id, name, capabilities, restrictions"
+                            ).execute()
+                            test_results['steps'].append({
+                                'step': '共有ドライブ詳細取得',
+                                'status': 'success',
+                                'data': drive_info
+                            })
+                        except Exception as e:
+                            test_results['steps'].append({
+                                'step': '共有ドライブ詳細取得',
+                                'status': 'error',
+                                'error': str(e)
+                            })
+                    
+                    # ステップ6: ファイル一覧取得テスト
+                    try:
+                        files = drive_sync.list_folder_files(folder_id)
+                        test_results['steps'].append({
+                            'step': 'ファイル一覧取得',
+                            'status': 'success',
+                            'data': {
+                                'file_count': len(files),
+                                'files': files[:10]  # 最初の10件のみ
+                            }
+                        })
+                        
+                        test_results['final_result'] = {
+                            'success': True,
+                            'folder_id': folder_id,
+                            'file_count': len(files),
+                            'is_shared_drive': drive_id is not None,
+                            'drive_id': drive_id
+                        }
+                        
+                    except Exception as e:
+                        test_results['steps'].append({
+                            'step': 'ファイル一覧取得',
+                            'status': 'error',
+                            'error': str(e)
+                        })
+                        test_results['errors'].append(f'ファイル一覧取得エラー: {str(e)}')
+                    
+                except Exception as e:
+                    test_results['steps'].append({
+                        'step': 'フォルダ詳細取得',
+                        'status': 'error',
+                        'error': str(e)
+                    })
+                    test_results['errors'].append(f'フォルダ詳細取得エラー: {str(e)}')
+            else:
+                test_results['final_result'] = {
+                    'success': False,
+                    'error': 'フォルダが見つかりません'
+                }
+            
+        except Exception as e:
+            test_results['steps'].append({
+                'step': 'フォルダ検索',
+                'status': 'error',
+                'error': str(e)
+            })
+            test_results['errors'].append(f'フォルダ検索エラー: {str(e)}')
+        
+        print(f"=== テスト完了 ===")
+        
+        return jsonify({
+            'success': True,
+            'test_results': test_results
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'テスト実行エラー: {str(e)}',
+            'input': folder_input
+        }), 500
+
+@app.route('/drive/check_permissions', methods=['GET'])
+@auth.login_required
+def check_drive_permissions():
+    """共有ドライブの権限をチェック"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    try:
+        result = drive_sync.check_shared_drive_permissions()
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'error': f'権限チェックエラー: {str(e)}'}), 500
+
+@app.route('/drive/force_reauth', methods=['POST'])
+@auth.login_required
+def force_drive_reauth():
+    """Google Drive認証を強制的にリセット"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    try:
+        drive_sync.force_reauth()
+        return jsonify({
+            'success': True,
+            'message': '認証情報をリセットしました。再認証が必要です。',
+            'required_scopes': drive_sync.scopes
+        })
+    except Exception as e:
+        return jsonify({'error': f'認証リセットエラー: {str(e)}'}), 500
+
+@app.route('/drive/test_detailed_access', methods=['POST'])
+@auth.login_required
+def test_detailed_drive_access():
+    """共有ドライブへの詳細アクセステスト"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    data = request.get_json() or {}
+    folder_input = data.get('folder_input', '').strip()
+    
+    if not folder_input:
+        return jsonify({'error': 'フォルダ指定が必要です'}), 400
+    
+    try:
+        # まずフォルダIDを取得
+        folder_id = drive_sync.find_folder_by_name(folder_input)
+        
+        if not folder_id:
+            return jsonify({
+                'success': False,
+                'error': 'フォルダが見つかりません',
+                'input': folder_input
+            })
+        
+        # 詳細テストを実行
+        test_results = drive_sync.test_shared_drive_access(folder_id)
+        
+        return jsonify({
+            'success': True,
+            'input': folder_input,
+            'folder_id': folder_id,
+            'test_results': test_results
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'詳細テスト実行エラー: {str(e)}',
+            'input': folder_input
+        }), 500
+
+@app.route('/drive/list_shared_drives', methods=['GET'])
+@auth.login_required
+def list_shared_drives():
+    """共有ドライブ一覧を取得"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    try:
+        drives = drive_sync.list_shared_drives()
+        return jsonify({
+            'success': True,
+            'drives': drives,
+            'count': len(drives)
+        })
+    except Exception as e:
+        return jsonify({'error': f'共有ドライブ一覧取得エラー: {str(e)}'}), 500
+
+@app.route('/drive/shared_drive_root_files/<drive_id>', methods=['GET'])
+@auth.login_required
+def get_shared_drive_root_files(drive_id):
+    """共有ドライブのルート直下ファイル一覧を取得"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    try:
+        files = drive_sync.get_shared_drive_root_files(drive_id)
+        return jsonify({
+            'success': True,
+            'files': files,
+            'count': len(files),
+            'drive_id': drive_id
+        })
+    except Exception as e:
+        return jsonify({'error': f'共有ドライブファイル取得エラー: {str(e)}'}), 500
+
+def extract_text_from_pptx(file_path):
+    """PowerPointファイルからテキストを抽出"""
+    try:
+        presentation = Presentation(file_path)
+        text_content = []
+        
+        for slide_num, slide in enumerate(presentation.slides, 1):
+            slide_text = f"\n--- スライド {slide_num} ---\n"
+            
+            for shape in slide.shapes:
+                if hasattr(shape, "text") and shape.text.strip():
+                    slide_text += shape.text.strip() + "\n"
+            
+            text_content.append(slide_text)
+        
+        return "\n".join(text_content)
+    except Exception as e:
+        print(f"PowerPointテキスト抽出エラー: {e}")
+        return ""
+
+def extract_text_from_ppt(file_path):
+    """PowerPoint (.ppt) ファイルからテキストを抽出"""
+    try:
+        # .pptファイルは複雑な処理が必要なため、基本的なエラーハンドリングのみ
+        # 実用的には.pptxへの変換を推奨
+        print(f"警告: .pptファイルは限定的なサポートです。.pptxでの保存を推奨します。")
+        return f"PowerPoint ファイル: {os.path.basename(file_path)}\n（テキスト抽出には制限があります）"
+    except Exception as e:
+        print(f"PowerPoint (.ppt) 処理エラー: {e}")
+        return ""
+
+@app.route('/drive/folder/files_recursive', methods=['POST'])
+@auth.login_required
+def get_folder_files_recursive():
+    """フォルダ内のファイルを再帰的に取得"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    data = request.get_json() or {}
+    folder_input = data.get('folder_input', '').strip()
+    try:
+        max_depth = int(data.get('max_depth', 3))  # 文字列から整数に変換
+        if max_depth < 1 or max_depth > 10:
+            max_depth = 3  # デフォルト値に戻す
+    except (ValueError, TypeError):
+        max_depth = 3  # デフォルト値
+    
+    if not folder_input:
+        return jsonify({'error': 'フォルダ指定が必要です'}), 400
+    
+    try:
+        # フォルダIDを取得
+        folder_id = drive_sync.find_folder_by_name(folder_input)
+        
+        if not folder_id:
+            return jsonify({
+                'success': False,
+                'error': 'フォルダが見つかりません',
+                'input': folder_input
+            })
+        
+        # 再帰的にファイルを取得
+        files = drive_sync.list_folder_files_recursive(folder_id, max_depth)
+        
+        # 深度別統計を作成
+        depth_stats = {}
+        folder_stats = {}
+        
+        for file in files:
+            depth = file.get('depth', 1)
+            folder_path = file.get('folder_path', '/')
+            
+            depth_stats[depth] = depth_stats.get(depth, 0) + 1
+            folder_stats[folder_path] = folder_stats.get(folder_path, 0) + 1
+        
+        return jsonify({
+            'success': True,
+            'folder_input': folder_input,
+            'folder_id': folder_id,
+            'total_files': len(files),
+            'max_depth': max_depth,
+            'depth_stats': depth_stats,
+            'folder_stats': folder_stats,
+            'files': files[:50],  # 最初の50件のみ返す（パフォーマンス考慮）
+            'files_truncated': len(files) > 50
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'再帰的ファイル取得エラー: {str(e)}',
+            'input': folder_input
+        }), 500
+
+def get_rag_corpora():
+    """利用可能なRAGコーパス一覧を取得"""
+    try:
+        print("RAGコーパス一覧取得を試行中...")
+        
+        # 方法1: 公式ドキュメント通りのvertexai.preview.ragを使用
+        try:
+            import vertexai
+            from vertexai.preview import rag
+            
+            # Vertex AI を初期化
+            vertexai.init(project=PROJECT_ID, location="us-central1")
+            print("Vertex AI初期化完了")
+            
+            # RAGコーパス一覧を取得
+            corpora_list = rag.list_corpora()
+            print(f"rag.list_corpora()の結果: {type(corpora_list)}")
+            
+            corpora = []
+            for corpus in corpora_list:
+                print(f"コーパス詳細: {corpus}")
+                corpora.append({
+                    'id': corpus.name if hasattr(corpus, 'name') else str(corpus),
+                    'display_name': corpus.display_name if hasattr(corpus, 'display_name') else f"コーパス {corpus.name.split('/')[-1][:8]}..." if hasattr(corpus, 'name') else 'Unknown',
+                    'description': corpus.description if hasattr(corpus, 'description') else '',
+                    'created_time': corpus.create_time.strftime('%Y-%m-%d %H:%M:%S') if hasattr(corpus, 'create_time') and corpus.create_time else 'N/A'
+                })
+            
+            if corpora:
+                print(f"Vertex AI RAG API経由でコーパス {len(corpora)} 個を取得しました")
+                return corpora
+            else:
+                print("Vertex AI RAG API: コーパスが見つかりませんでした")
+                
+        except ImportError as e:
+            print(f"vertexai.preview.rag インポートエラー: {e}")
+        except AttributeError as e:
+            print(f"vertexai.preview.rag アトリビュートエラー: {e}")
+        except Exception as e:
+            print(f"Vertex AI RAG API呼び出しエラー: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # 方法2: REST APIを直接使用（公式ドキュメントのcurlコマンドベース）
+        try:
+            import requests
+            from google.auth import default
+            from google.auth.transport.requests import Request as AuthRequest
+            
+            print("REST API経由でRAGコーパス一覧を取得中...")
+            
+            # デフォルト認証情報を取得
+            credentials, _ = default()
+            credentials.refresh(AuthRequest())
+            
+            # 公式ドキュメントに基づくREST APIエンドポイント
+            url = f"https://us-central1-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/us-central1/ragCorpora"
+            
+            headers = {
+                'Authorization': f'Bearer {credentials.token}',
+                'Content-Type': 'application/json'
+            }
+            
+            print(f"APIエンドポイント: {url}")
+            
+            response = requests.get(url, headers=headers, timeout=30)
+            print(f"レスポンスステータス: {response.status_code}")
+            
+            if response.status_code == 200:
+                data = response.json()
+                print(f"レスポンスデータ: {data}")
+                
+                corpora = []
+                
+                for corpus in data.get('ragCorpora', []):
+                    corpora.append({
+                        'id': corpus.get('name', ''),
+                        'display_name': corpus.get('displayName', 'Unknown'),
+                        'description': corpus.get('description', ''),
+                        'created_time': corpus.get('createTime', 'N/A')
+                    })
+                
+                if corpora:
+                    print(f"REST API経由でRAGコーパス {len(corpora)} 個を取得しました")
+                    return corpora
+                else:
+                    print("REST API経由: コーパスが見つかりませんでした")
+                    
+            elif response.status_code == 404:
+                print("REST API: RAGコーパスエンドポイントが見つかりません（404）")
+            elif response.status_code == 403:
+                print("REST API: アクセス権限がありません（403）")
+            else:
+                print(f"REST API呼び出し失敗: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            print(f"REST API呼び出しエラー: {e}")
+            import traceback
+            traceback.print_exc()
+        
+        # 方法3: gcloud CLIを使用（v1 APIベース）
+        try:
+            import subprocess
+            import json
+            
+            print("gcloud CLI経由でRAGコーパス一覧を取得中...")
+            
+            # gcloud aiplatform rag-corpora list コマンド
+            cmd = [
+                'gcloud', 'ai', 'rag-corpora', 'list', 
+                f'--project={PROJECT_ID}', 
+                '--location=us-central1',
+                '--format=json'
+            ]
+            
+            print(f"実行コマンド: {' '.join(cmd)}")
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            
+            print(f"gcloud実行結果: returncode={result.returncode}")
+            if result.stdout:
+                print(f"stdout: {result.stdout}")
+            if result.stderr:
+                print(f"stderr: {result.stderr}")
+            
+            if result.returncode == 0 and result.stdout:
+                data = json.loads(result.stdout)
+                print(f"gcloud経由でRAGコーパス情報を取得: {len(data)}件")
+                
+                corpora = []
+                for corpus in data:
+                    corpora.append({
+                        'id': corpus.get('name', ''),
+                        'display_name': corpus.get('displayName', 'Unknown'),
+                        'description': corpus.get('description', ''),
+                        'created_time': corpus.get('createTime', 'N/A')
+                    })
+                
+                if corpora:
+                    print(f"gcloud CLI経由でRAGコーパス {len(corpora)} 個を取得しました")
+                    return corpora
+                    
+        except (subprocess.TimeoutExpired, subprocess.CalledProcessError, FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"gcloud CLI呼び出しエラー: {e}")
+        except Exception as e:
+            print(f"gcloud CLI実行エラー: {e}")
+        
+        # フォールバック: 現在のコーパス情報を取得
+        print("フォールバック: 現在の環境変数からコーパス情報を取得")
+        
+        # RAG_CORPUSからコーパス名を抽出
+        corpus_id = RAG_CORPUS
+        corpus_name = "現在使用中のコーパス"
+        
+        # コーパスIDからコーパス名を推測
+        if 'ragCorpora/' in corpus_id:
+            # projects/PROJECT_ID/locations/LOCATION/ragCorpora/CORPUS_ID の形式
+            parts = corpus_id.split('/')
+            if len(parts) >= 6:
+                actual_corpus_id = parts[-1]
+                corpus_name = f"RAGコーパス ({actual_corpus_id[:8]}...)"
+        
+        corpora = [{
+            'id': corpus_id,
+            'display_name': corpus_name,
+            'description': f'環境変数 RAG_CORPUS で設定されたコーパス',
+            'created_time': 'N/A'
+        }]
+        
+        # 設定ファイルから追加のコーパス情報を読み込み（あれば）
+        try:
+            import configparser
+            config_file = 'temp/rag_config.ini'
+            
+            if os.path.exists(config_file):
+                config = configparser.ConfigParser()
+                config.read(config_file)
+                
+                if 'RAG' in config and 'recent_corpora' in config['RAG']:
+                    recent_corpora_str = config['RAG']['recent_corpora']
+                    recent_corpora = json.loads(recent_corpora_str)
+                    
+                    for corpus_info in recent_corpora:
+                        if corpus_info['id'] != corpus_id:  # 重複を避ける
+                            corpora.append(corpus_info)
+                            
+        except Exception as e:
+            print(f"設定ファイル読み込みエラー（無視）: {e}")
+        
+        print(f"最終的に返すコーパス数: {len(corpora)}")
+        return corpora
+        
+    except Exception as e:
+        print(f"RAGコーパス一覧取得エラー: {e}")
+        import traceback
+        traceback.print_exc()
+        # 最終フォールバック：現在のコーパスのみを返す
+        return [{
+            'id': RAG_CORPUS,
+            'display_name': 'デフォルトコーパス',
+            'description': '環境変数で設定されたRAGコーパス',
+            'created_time': 'N/A'
+        }]
+
+@app.route('/get_rag_corpora', methods=['GET'])
+@auth.login_required
+def get_rag_corpora_endpoint():
+    """RAGコーパス一覧取得エンドポイント"""
+    try:
+        corpora = get_rag_corpora()
+        return jsonify({
+            'success': True,
+            'corpora': corpora,
+            'current_corpus': RAG_CORPUS
+        })
+    except Exception as e:
+        print(f"RAGコーパス一覧取得エラー: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'コーパス一覧取得エラー: {str(e)}'
+        }), 500
+
+@app.route('/set_rag_corpus', methods=['POST'])
+@auth.login_required
+def set_rag_corpus():
+    """RAGコーパスを動的に設定"""
+    try:
+        data = request.get_json()
+        new_corpus_id = data.get('corpus_id')
+        
+        if not new_corpus_id:
+            return jsonify({
+                'success': False,
+                'error': 'コーパスIDが指定されていません'
+            }), 400
+        
+        # グローバル変数を更新
+        global RAG_CORPUS
+        old_corpus_id = RAG_CORPUS
+        RAG_CORPUS = new_corpus_id
+        
+        # 設定ファイルに保存（履歴も含む）
+        try:
+            import configparser
+            config_file = 'temp/rag_config.ini'
+            os.makedirs(os.path.dirname(config_file), exist_ok=True)
+            
+            config = configparser.ConfigParser()
+            if os.path.exists(config_file):
+                config.read(config_file)
+            
+            if 'RAG' not in config:
+                config['RAG'] = {}
+            
+            # 現在のコーパス設定を保存
+            config['RAG']['current_corpus'] = new_corpus_id
+            config['RAG']['last_updated'] = datetime.now().isoformat()
+            
+            # コーパス履歴を管理
+            recent_corpora = []
+            if 'recent_corpora' in config['RAG']:
+                try:
+                    recent_corpora = json.loads(config['RAG']['recent_corpora'])
+                except json.JSONDecodeError:
+                    recent_corpora = []
+            
+            # 新しいコーパス情報を作成
+            corpus_name = f"RAGコーパス ({new_corpus_id.split('/')[-1][:8]}...)" if 'ragCorpora/' in new_corpus_id else new_corpus_id
+            new_corpus_info = {
+                'id': new_corpus_id,
+                'display_name': corpus_name,
+                'description': f'設定日時: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}',
+                'created_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+            
+            # 既存の履歴から同じIDを削除
+            recent_corpora = [c for c in recent_corpora if c['id'] != new_corpus_id]
+            
+            # 新しいコーパスを先頭に追加
+            recent_corpora.insert(0, new_corpus_info)
+            
+            # 最大5件まで保持
+            recent_corpora = recent_corpora[:5]
+            
+            # 履歴を保存
+            config['RAG']['recent_corpora'] = json.dumps(recent_corpora, ensure_ascii=False)
+            
+            with open(config_file, 'w', encoding='utf-8') as f:
+                config.write(f)
+                
+            print(f"RAGコーパス設定を保存: {new_corpus_id}")
+                
+        except Exception as e:
+            print(f"設定ファイル保存エラー: {e}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'RAGコーパスを変更しました',
+            'old_corpus': old_corpus_id,
+            'new_corpus': RAG_CORPUS,
+            'change_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        })
+        
+    except Exception as e:
+        print(f"RAGコーパス設定エラー: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'コーパス設定エラー: {str(e)}'
+        }), 500
+
+def create_rag_corpus(corpus_name, description=""):
+    """新しいRAGコーパスを作成"""
+    try:
+        import vertexai
+        from vertexai.preview import rag
+        
+        # Vertex AI を初期化
+        vertexai.init(project=PROJECT_ID, location="us-central1")
+        print(f"新しいRAGコーパスを作成中: {corpus_name}")
+        
+        # RAGコーパスを作成
+        corpus = rag.create_corpus(
+            display_name=corpus_name,
+            description=description or f"Auto-created corpus: {corpus_name}"
+        )
+        
+        print(f"RAGコーパス作成成功: {corpus.name}")
+        return {
+            'success': True,
+            'corpus_id': corpus.name,
+            'display_name': corpus.display_name,
+            'description': corpus.description,
+            'message': f'新しいRAGコーパス "{corpus_name}" を作成しました'
+        }
+        
+    except Exception as e:
+        print(f"RAGコーパス作成エラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'success': False,
+            'error': str(e),
+            'message': f'RAGコーパス作成に失敗しました: {str(e)}'
+        }
+
+def import_files_to_rag_corpus(corpus_id, gcs_uris, chunk_size=512, chunk_overlap=100):
+    """Cloud StorageファイルをRAGコーパスにインポート"""
+    try:
+        import vertexai
+        from vertexai.preview import rag
+        
+        # Vertex AI を初期化
+        vertexai.init(project=PROJECT_ID, location="us-central1")
+        print(f"RAGコーパスにファイルをインポート中: {corpus_id}")
+        print(f"インポート対象ファイル数: {len(gcs_uris)}")
+        
+        # GCS URIのリストを準備
+        if isinstance(gcs_uris, str):
+            gcs_uris = [gcs_uris]
+        
+        # RAGファイルをインポート
+        response = rag.import_files(
+            corpus_name=corpus_id,
+            paths=gcs_uris,
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap
+        )
+        
+        print(f"RAGファイルインポート開始: {response}")
+        
+        return {
+            'success': True,
+            'operation': str(response),
+            'corpus_id': corpus_id,
+            'imported_files': len(gcs_uris),
+            'files': gcs_uris,
+            'message': f'{len(gcs_uris)}個のファイルをRAGコーパスにインポートしました'
+        }
+        
+    except Exception as e:
+        print(f"RAGファイルインポートエラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'success': False,
+            'error': str(e),
+            'corpus_id': corpus_id,
+            'message': f'RAGファイルインポートに失敗しました: {str(e)}'
+        }
+
+def find_or_create_rag_corpus(corpus_name, description=""):
+    """RAGコーパスを検索し、存在しない場合は作成"""
+    try:
+        # 既存のコーパス一覧を取得
+        corpora = get_rag_corpora()
+        
+        # 名前で既存コーパスを検索
+        existing_corpus = None
+        for corpus in corpora:
+            if corpus.get('display_name') == corpus_name:
+                existing_corpus = corpus
+                break
+        
+        if existing_corpus:
+            print(f"既存のRAGコーパスを使用: {corpus_name}")
+            return {
+                'success': True,
+                'corpus_id': existing_corpus['id'],
+                'display_name': existing_corpus['display_name'],
+                'description': existing_corpus['description'],
+                'created': False,
+                'message': f'既存のRAGコーパス "{corpus_name}" を使用します'
+            }
+        else:
+            print(f"新しいRAGコーパスを作成: {corpus_name}")
+            result = create_rag_corpus(corpus_name, description)
+            if result['success']:
+                result['created'] = True
+            return result
+            
+    except Exception as e:
+        print(f"RAGコーパス検索・作成エラー: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'message': f'RAGコーパス検索・作成に失敗しました: {str(e)}'
+        }
+
+def upload_and_import_to_rag(file_path, filename, corpus_name, description=""):
+    """ファイルをCloud Storageにアップロードし、RAGコーパスにインポート"""
+    try:
+        # ステップ1: Cloud Storageにアップロード
+        print(f"ステップ1: Cloud Storageにアップロード中: {filename}")
+        gcs_uri = upload_to_cloud_storage(file_path, filename)
+        
+        if not gcs_uri:
+            return {
+                'success': False,
+                'error': 'Cloud Storageアップロードに失敗しました',
+                'filename': filename
+            }
+        
+        # ステップ2: RAGコーパスを検索または作成
+        print(f"ステップ2: RAGコーパス検索・作成中: {corpus_name}")
+        corpus_result = find_or_create_rag_corpus(corpus_name, description)
+        
+        if not corpus_result['success']:
+            return {
+                'success': False,
+                'error': corpus_result.get('error', 'RAGコーパス作成に失敗'),
+                'filename': filename,
+                'gcs_uri': gcs_uri
+            }
+        
+        corpus_id = corpus_result['corpus_id']
+        
+        # ステップ3: RAGコーパスにファイルをインポート
+        print(f"ステップ3: RAGコーパスにインポート中: {filename}")
+        import_result = import_files_to_rag_corpus(corpus_id, [gcs_uri])
+        
+        if import_result['success']:
+            return {
+                'success': True,
+                'filename': filename,
+                'gcs_uri': gcs_uri,
+                'corpus_id': corpus_id,
+                'corpus_name': corpus_name,
+                'corpus_created': corpus_result.get('created', False),
+                'message': f'ファイル "{filename}" をRAGコーパス "{corpus_name}" に正常にインポートしました'
+            }
+        else:
+            return {
+                'success': False,
+                'error': import_result.get('error', 'RAGインポートに失敗'),
+                'filename': filename,
+                'gcs_uri': gcs_uri,
+                'corpus_id': corpus_id,
+                'message': f'Cloud Storageアップロードは成功しましたが、RAGインポートに失敗しました'
+            }
+        
+    except Exception as e:
+        print(f"アップロード・インポートエラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return {
+            'success': False,
+            'error': str(e),
+            'filename': filename,
+            'message': f'処理中にエラーが発生しました: {str(e)}'
+        }
+
+@app.route('/drive/sync_to_rag', methods=['POST'])
+@auth.login_required
+def sync_drive_to_rag():
+    """Google DriveフォルダをRAGコーパスに直接同期"""
+    drive_sync = get_drive_sync()
+    if not drive_sync:
+        return jsonify({'error': 'Google Drive同期機能が無効です'}), 500
+    
+    # 保存された認証情報を読み込み
+    if not drive_sync.load_credentials():
+        return jsonify({'error': '認証が必要です', 'auth_required': True}), 401
+    
+    data = request.get_json() or {}
+    folder_name = data.get('folder_name', DRIVE_FOLDER_NAME)
+    corpus_name = data.get('corpus_name', 'Drive Sync Corpus')
+    corpus_description = data.get('corpus_description', '')
+    chunk_size = int(data.get('chunk_size', 512))
+    chunk_overlap = int(data.get('chunk_overlap', 100))
+    force_sync = data.get('force_sync', False)
+    recursive = data.get('recursive_sync', False)
+    
+    try:
+        max_depth = int(data.get('max_depth', 3))
+        if max_depth < 1 or max_depth > 10:
+            max_depth = 3
+    except (ValueError, TypeError):
+        max_depth = 3
+    
+    try:
+        print(f"Google Drive -> RAG同期開始:")
+        print(f"  フォルダ名: {folder_name}")
+        print(f"  RAGコーパス名: {corpus_name}")
+        print(f"  再帰モード: {recursive} (深度: {max_depth})")
+        print(f"  チャンクサイズ: {chunk_size}")
+        
+        # ステップ1: Google Driveフォルダを検索
+        folder_id = drive_sync.find_folder_by_name(folder_name)
+        if not folder_id:
+            return jsonify({
+                'success': False,
+                'error': f'フォルダ "{folder_name}" が見つかりません'
+            })
+        
+        # ステップ2: RAGコーパスを検索または作成
+        corpus_result = find_or_create_rag_corpus(corpus_name, corpus_description)
+        if not corpus_result['success']:
+            return jsonify({
+                'success': False,
+                'error': f'RAGコーパス作成に失敗: {corpus_result.get("error", "不明なエラー")}'
+            })
+        
+        corpus_id = corpus_result['corpus_id']
+        
+        # ステップ3: Drive同期でCloud Storageにアップロード
+        sync_result = drive_sync.sync_folder_to_rag(
+            folder_name, 
+            corpus_name, 
+            force_sync, 
+            recursive, 
+            max_depth
+        )
+        
+        if not sync_result.get('success', False):
+            return jsonify({
+                'success': False,
+                'error': f'Drive同期に失敗: {sync_result.get("error", "不明なエラー")}'
+            })
+        
+        # ステップ4: Cloud StorageからRAGコーパスにインポート
+        uploaded_files = sync_result.get('uploaded_files', [])
+        gcs_uris = [file_info.get('gcs_uri') for file_info in uploaded_files if file_info.get('gcs_uri')]
+        
+        if gcs_uris:
+            print(f"RAGコーパスにインポート: {len(gcs_uris)}個のファイル")
+            import_result = import_files_to_rag_corpus(
+                corpus_id, 
+                gcs_uris, 
+                chunk_size, 
+                chunk_overlap
+            )
+            
+            if import_result['success']:
+                return jsonify({
+                    'success': True,
+                    'message': f'Google Driveから{len(gcs_uris)}個のファイルをRAGコーパス "{corpus_name}" に同期しました',
+                    'sync_result': sync_result,
+                    'import_result': import_result,
+                    'corpus_id': corpus_id,
+                    'corpus_name': corpus_name,
+                    'corpus_created': corpus_result.get('created', False),
+                    'imported_files': len(gcs_uris)
+                })
+            else:
+                return jsonify({
+                    'success': False,
+                    'error': f'RAGインポートに失敗: {import_result.get("error", "不明なエラー")}',
+                    'sync_result': sync_result,
+                    'partial_success': True,
+                    'uploaded_files': len(gcs_uris)
+                })
+        else:
+            return jsonify({
+                'success': True,
+                'message': 'Google Drive同期は完了しましたが、インポート対象のファイルがありませんでした',
+                'sync_result': sync_result,
+                'corpus_id': corpus_id,
+                'corpus_name': corpus_name,
+                'imported_files': 0
+            })
+        
+    except Exception as e:
+        print(f"Drive -> RAG同期エラー: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'同期エラー: {str(e)}'}), 500
+
+@app.route('/create_rag_corpus', methods=['POST'])
+@auth.login_required
+def create_rag_corpus_endpoint():
+    """新しいRAGコーパス作成エンドポイント"""
+    try:
+        data = request.get_json()
+        corpus_name = data.get('corpus_name', '').strip()
+        description = data.get('description', '').strip()
+        
+        if not corpus_name:
+            return jsonify({
+                'success': False,
+                'error': 'コーパス名が指定されていません'
+            }), 400
+        
+        # 既存のコーパス名をチェック
+        existing_corpora = get_rag_corpora()
+        for corpus in existing_corpora:
+            if corpus.get('display_name') == corpus_name:
+                return jsonify({
+                    'success': False,
+                    'error': f'コーパス名 "{corpus_name}" は既に存在します'
+                }), 400
+        
+        # 新しいコーパスを作成
+        result = create_rag_corpus(corpus_name, description)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'corpus_id': result['corpus_id'],
+                'display_name': result['display_name'],
+                'description': result['description'],
+                'message': result['message']
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': result.get('error', '不明なエラー'),
+                'message': result.get('message', 'コーパス作成に失敗しました')
+            }), 500
+        
+    except Exception as e:
+        print(f"RAGコーパス作成エンドポイントエラー: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'コーパス作成エラー: {str(e)}'
+        }), 500
+
+@app.route('/import_to_rag_corpus', methods=['POST'])
+@auth.login_required
+def import_to_rag_corpus_endpoint():
+    """既存のCloud StorageファイルをRAGコーパスにインポート"""
+    try:
+        data = request.get_json()
+        corpus_id = data.get('corpus_id', '').strip()
+        gcs_uris = data.get('gcs_uris', [])
+        chunk_size = int(data.get('chunk_size', 512))
+        chunk_overlap = int(data.get('chunk_overlap', 100))
+        
+        if not corpus_id:
+            return jsonify({
+                'success': False,
+                'error': 'コーパスIDが指定されていません'
+            }), 400
+        
+        if not gcs_uris:
+            return jsonify({
+                'success': False,
+                'error': 'インポート対象のファイルが指定されていません'
+            }), 400
+        
+        # RAGコーパスにファイルをインポート
+        result = import_files_to_rag_corpus(corpus_id, gcs_uris, chunk_size, chunk_overlap)
+        
+        if result['success']:
+            return jsonify({
+                'success': True,
+                'corpus_id': result['corpus_id'],
+                'imported_files': result['imported_files'],
+                'files': result['files'],
+                'message': result['message']
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': result.get('error', '不明なエラー'),
+                'message': result.get('message', 'インポートに失敗しました')
+            }), 500
+        
+    except Exception as e:
+        print(f"RAGインポートエンドポイントエラー: {e}")
+        return jsonify({
+            'success': False,
+            'error': f'インポートエラー: {str(e)}'
+        }), 500
+
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8080, debug=True) 
+    import sys
+    # ポート番号を環境変数またはコマンドライン引数から取得
+    port = int(os.environ.get('PORT', 8080))  # デフォルトを8080に変更
+    if len(sys.argv) > 1:
+        try:
+            port = int(sys.argv[1])
+        except ValueError:
+            pass
+    
+    print(f"Starting server on port {port}")
+    app.run(host='0.0.0.0', port=port, debug=True) 

@@ -1,275 +1,109 @@
-# CMP Chat App
+# Vertex AI RAG
 
-Vertex AI RAGを使用したWebベースのチャットアプリケーションです。
+Google Drive同期機能を持つRAG（Retrieval-Augmented Generation）アプリケーション
 
-## 機能
+## 📁 プロジェクト構造
 
-- **リアルタイムチャット**: ストリーミングレスポンスによる即座な会話
-- **RAG統合**: Vertex AI RAGを使用した高度な質問応答
-- **レスポンシブデザイン**: デスクトップ・モバイル対応
-- **モダンUI**: 美しいグラデーションとアニメーション
-- **ベーシック認証**: 内部スタッフ向けアクセス制限
-
-## セットアップ
-
-### 必要要件
-
-- Python 3.8以上
-- Google Cloud Project
-- Vertex AI APIの有効化
-- 適切なRAGコーパスの設定
-
-### インストール
-
-1. リポジトリをクローンします：
-```bash
-git clone https://github.com/taiga-7543/cmp-chat-app.git
-cd cmp-chat-app
+```
+vertex-ai-rag/
+├── app.py                          # メインアプリケーション
+├── drive_sync_integration.py       # Google Drive同期機能
+├── requirements.txt                # Python依存関係
+├── .env                           # 環境変数（本番用）
+├── config/                        # 設定ファイル
+│   ├── client_secrets.json.template # OAuth設定テンプレート
+│   ├── client_secrets.json        # OAuth設定（機密）
+│   ├── .env.example               # 環境変数例
+│   └── rag-service-account-key.json # サービスアカウントキー（機密）
+├── deployment/                    # デプロイメント設定
+│   ├── vercel.json               # Vercel設定
+│   ├── railway.json              # Railway設定
+│   ├── render.yaml               # Render設定
+│   ├── Dockerfile                # Docker設定
+│   ├── .dockerignore             # Docker除外ファイル
+│   └── cloud_functions_deploy.yaml # Cloud Functions設定
+├── docs/                         # ドキュメント
+│   ├── DEPLOYMENT.md             # デプロイメントガイド
+│   └── setup_oauth.md            # OAuth設定ガイド
+├── scripts/                      # スクリプト・ユーティリティ
+│   ├── setup-env.sh              # 環境セットアップ
+│   ├── drive_webhook_setup.py    # Webhookセットアップ
+│   └── user_auth_example.py      # 認証例
+├── temp/                         # 一時ファイル・ログ
+│   ├── drive_sync_state.json     # 同期状態
+│   └── google_drive_token.pickle # 認証トークン
+├── templates/                    # HTMLテンプレート
+├── static/                       # 静的ファイル（CSS, JS）
+└── uploads/                      # アップロード用ディレクトリ
 ```
 
-2. 依存関係をインストールします：
+## 🚀 クイックスタート
+
+### 1. 環境設定
+
 ```bash
+# 依存関係をインストール
 pip install -r requirements.txt
+
+# 環境変数を設定
+cp config/.env.example .env
+# .envファイルを編集
 ```
 
-3. 環境変数を設定します：
+### 2. Google Cloud設定
 
-#### 方法1: 環境変数ファイル (.env)
 ```bash
-# Google Cloud設定
-GOOGLE_CLOUD_PROJECT=your-project-id
-RAG_CORPUS=projects/your-project-id/locations/us-central1/ragCorpora/your-corpus-id
-GEMINI_MODEL=gemini-2.5-flash
-
-# Google Cloud認証（どちらか一つを選択）
-# 方法A: サービスアカウントキーファイルのパス
-GOOGLE_APPLICATION_CREDENTIALS=path/to/your/service-account-key.json
-
-# 方法B: サービスアカウントキーのJSONを直接設定（Renderなどのクラウドサービス向け）
-GOOGLE_APPLICATION_CREDENTIALS_JSON={"type": "service_account", "project_id": "your-project-id", ...}
-
-# ベーシック認証（内部スタッフ向けアクセス制限）
-AUTH_USERNAME=admin
-AUTH_PASSWORD=your-secure-password
+# OAuth設定
+cp config/client_secrets.json.template config/client_secrets.json
+# client_secrets.jsonを編集
 ```
 
-#### 方法2: 環境変数を直接設定
-```bash
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-export RAG_CORPUS="projects/your-project-id/locations/us-central1/ragCorpora/your-corpus-id"
-export GEMINI_MODEL="gemini-2.5-flash"
-export GOOGLE_APPLICATION_CREDENTIALS="path/to/your/service-account-key.json"
-```
-
-#### 方法3: Google Cloud SDK認証（ローカル開発用）
-```bash
-gcloud auth application-default login
-```
-
-## 使用方法
-
-### ローカルでの実行
+### 3. アプリケーション起動
 
 ```bash
 python app.py
 ```
 
-アプリケーションは `http://localhost:8080` で起動します。
+ブラウザで `http://localhost:8080` にアクセス
 
-### 本番環境での実行
+**認証情報:**
+- ユーザー名: `admin`
+- パスワード: `password123`
 
-```bash
-gunicorn --bind 0.0.0.0:8080 app:app
-```
+## ✨ 主な機能
 
-## デプロイ
+- **RAG（Retrieval-Augmented Generation）**: ドキュメントベースの質問応答
+- **Google Drive同期**: ドキュメントの自動同期
+- **共有ドライブ対応**: 企業用共有ドライブサポート
+- **ドキュメント管理**: アップロード・削除・一覧表示
+- **リアルタイムチャット**: ストリーミング応答
+- **認証システム**: 基本認証によるアクセス制御
 
-### Render
+## 📚 ドキュメント
 
-1. **GitHubリポジトリをRenderに接続**
-   - [Render](https://render.com)にログイン
-   - 「New +」→「Web Service」を選択
-   - GitHubリポジトリを選択
+- [デプロイメントガイド](docs/DEPLOYMENT.md)
+- [OAuth設定ガイド](docs/setup_oauth.md)
 
-2. **デプロイ設定**
-   - **Name**: `cmp-chat-app`（任意の名前）
-   - **Environment**: `Python 3`
-   - **Build Command**: `pip install -r requirements.txt`
-   - **Start Command**: `gunicorn --bind 0.0.0.0:$PORT app:app`
+## 🔧 開発
 
-3. **環境変数を設定**
-   - Renderのダッシュボードで「Environment」タブを選択
-   - 以下の環境変数を追加：
-     ```
-     GOOGLE_CLOUD_PROJECT=your-project-id
-     RAG_CORPUS=projects/your-project-id/locations/us-central1/ragCorpora/your-corpus-id
-     GEMINI_MODEL=gemini-2.5-flash
-     AUTH_USERNAME=admin
-     AUTH_PASSWORD=your-secure-password
-     ```
-   - **Google Cloud認証情報**（以下のいずれかを設定）:
-     ```
-     GOOGLE_APPLICATION_CREDENTIALS_JSON={"type":"service_account","project_id":"your-project-id","private_key_id":"key-id","private_key":"-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY\n-----END PRIVATE KEY-----\n","client_email":"your-service-account@your-project-id.iam.gserviceaccount.com","client_id":"123456789","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40your-project-id.iam.gserviceaccount.com"}
-     ```
+### ディレクトリ構造の意図
 
-   **重要**: 
-   - JSONは1行で記述し、改行文字は含めないでください
-   - ダブルクォートは適切にエスケープしてください
-   - private_keyの改行は `\n` で表現してください
+- `config/`: 機密性の高い設定ファイルを分離
+- `deployment/`: プラットフォーム別デプロイメント設定を整理
+- `docs/`: ドキュメントを集約
+- `scripts/`: ユーティリティスクリプトを整理
+- `temp/`: 一時ファイル・ログを分離（.gitignoreで除外）
 
-4. **デプロイ実行**
-   - 「Create Web Service」をクリック
-   - 自動的にビルドとデプロイが開始されます
+### 環境変数
 
-### Google Cloud Run
+主要な環境変数は `.env` ファイルで管理されています。詳細は `config/.env.example` を参照してください。
 
-1. プロジェクトをビルドしてデプロイ：
-```bash
-gcloud run deploy cmp-chat-app \
-  --source . \
-  --platform managed \
-  --region us-central1 \
-  --allow-unauthenticated \
-  --set-env-vars GOOGLE_CLOUD_PROJECT=your-project-id,RAG_CORPUS=projects/your-project-id/locations/us-central1/ragCorpora/your-corpus-id,GEMINI_MODEL=gemini-2.5-flash
-```
+### 認証設定
 
-### Heroku
+Google Cloud認証は以下のファイルで設定：
+- `config/client_secrets.json`: OAuth設定
+- `config/rag-service-account-key.json`: サービスアカウント設定
 
-1. `Procfile`を作成：
-```
-web: gunicorn --bind 0.0.0.0:$PORT app:app
-```
+## 📄 ライセンス
 
-2. 環境変数を設定：
-```bash
-heroku config:set GOOGLE_CLOUD_PROJECT=your-project-id
-heroku config:set RAG_CORPUS=projects/your-project-id/locations/us-central1/ragCorpora/your-corpus-id
-heroku config:set GEMINI_MODEL=gemini-2.5-flash
-heroku config:set GOOGLE_APPLICATION_CREDENTIALS_JSON='{"type": "service_account", "project_id": "your-project-id", ...}'
-```
-
-3. デプロイ：
-```bash
-heroku create your-app-name
-git push heroku main
-```
-
-## ファイル構造
-
-```
-cmp-chat-app/
-├── app.py              # メインアプリケーション
-├── requirements.txt    # 依存関係
-├── render.yaml         # Render設定ファイル
-├── .env.example        # 環境変数の例
-├── .gitignore         # Git除外ファイル
-├── templates/
-│   └── index.html     # HTMLテンプレート
-├── static/
-│   └── style.css      # CSSスタイル
-└── README.md          # このファイル
-```
-
-## 環境変数
-
-| 変数名 | 説明 | デフォルト値 |
-|--------|------|-------------|
-| `GOOGLE_CLOUD_PROJECT` | Google CloudプロジェクトID | `dotd-development-division` |
-| `RAG_CORPUS` | RAGコーパスの完全なリソース名 | `projects/{PROJECT_ID}/locations/us-central1/ragCorpora/3458764513820540928` |
-| `GEMINI_MODEL` | 使用するGeminiモデル | `gemini-2.5-flash` |
-| `GOOGLE_APPLICATION_CREDENTIALS` | サービスアカウントキーファイルのパス | - |
-| `GOOGLE_APPLICATION_CREDENTIALS_JSON` | サービスアカウントキーのJSON文字列 | - |
-| `AUTH_USERNAME` | ベーシック認証のユーザー名 | `admin` |
-| `AUTH_PASSWORD` | ベーシック認証のパスワード | - |
-
-## カスタマイズ
-
-### RAGコーパスの変更
-
-環境変数`RAG_CORPUS`を変更して、異なるRAGコーパスを使用できます：
-
-```bash
-export RAG_CORPUS="projects/your-project-id/locations/us-central1/ragCorpora/your-corpus-id"
-```
-
-### UIの変更
-
-- `templates/index.html`: HTML構造
-- `static/style.css`: スタイルとレイアウト
-
-### モデルの変更
-
-環境変数`GEMINI_MODEL`を変更して、異なるGeminiモデルを使用できます：
-
-```bash
-export GEMINI_MODEL="gemini-2.0-flash-exp"
-```
-
-## トラブルシューティング
-
-### 認証エラー
-
-- Google Cloud認証情報が正しく設定されているか確認
-- プロジェクトIDが正しいか確認
-- Vertex AI APIが有効化されているか確認
-
-### JSON認証エラー
-
-**エラー例**: `File /tmp/tmpXXXXXX.json is not a valid json file`
-
-**原因**: `GOOGLE_APPLICATION_CREDENTIALS_JSON`環境変数のJSON形式が正しくない
-
-**対処法**:
-1. **JSON形式を確認**:
-   - 1行で記述されているか
-   - すべての文字列がダブルクォートで囲まれているか
-   - 改行文字が `\n` でエスケープされているか
-
-2. **正しい形式の例**:
-   ```json
-   {"type":"service_account","project_id":"your-project-id","private_key_id":"key-id","private_key":"-----BEGIN PRIVATE KEY-----\nYOUR_PRIVATE_KEY\n-----END PRIVATE KEY-----\n","client_email":"your-service-account@your-project-id.iam.gserviceaccount.com","client_id":"123456789","auth_uri":"https://accounts.google.com/o/oauth2/auth","token_uri":"https://oauth2.googleapis.com/token","auth_provider_x509_cert_url":"https://www.googleapis.com/oauth2/v1/certs","client_x509_cert_url":"https://www.googleapis.com/robot/v1/metadata/x509/your-service-account%40your-project-id.iam.gserviceaccount.com"}
-   ```
-
-3. **JSONバリデーションツールを使用**:
-   - オンラインJSONバリデーターで形式を確認
-   - 不正な文字や構文エラーを修正
-
-### Base64パディングエラー
-
-**エラー例**: `Error('Incorrect padding')`
-
-**原因**: サービスアカウントキーの`private_key`フィールドのBase64エンコーディングにパディングエラーがある
-
-**対処法**:
-1. **サービスアカウントキーを再生成**:
-   - Google Cloud Consoleで新しいサービスアカウントキーを作成
-   - 古いキーを削除して新しいキーを使用
-
-2. **キーの形式を確認**:
-   - `private_key`フィールドが正しいPEM形式になっているか確認
-   - 改行文字が`\n`で正しくエスケープされているか確認
-
-3. **正しいprivate_key形式の例**:
-   ```
-   "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC...\n-----END PRIVATE KEY-----\n"
-   ```
-
-4. **自動修正機能**:
-   - アプリケーションにはBase64パディングの自動修正機能が組み込まれています
-   - それでも解決しない場合は、新しいサービスアカウントキーを生成してください
-
-### RAGコーパスエラー
-
-- コーパスIDが正しいか確認
-- コーパスが存在し、アクセス可能か確認
-- リージョンが一致しているか確認
-
-### Renderデプロイエラー
-
-- 環境変数が正しく設定されているか確認
-- サービスアカウントキーのJSONが正しい形式か確認
-- ビルドログでエラーの詳細を確認
-
-## ライセンス
-
-このプロジェクトはMITライセンスの下で公開されています。 
+このプロジェクトはMITライセンスの下で公開されています。詳細は [LICENSE](LICENSE) ファイルを参照してください。 

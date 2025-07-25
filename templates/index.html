@@ -38,6 +38,10 @@
                         <span class="feature-icon">📚</span>
                         <span class="feature-text">ドキュメント一覧</span>
                     </div>
+                    <div class="feature-item" id="driveSyncFeature">
+                        <span class="feature-icon">🔄</span>
+                        <span class="feature-text">Drive同期</span>
+                    </div>
                 </div>
                 
                 <!-- 設定 -->
@@ -97,14 +101,45 @@
                     <h2>📤 ドキュメントをRAGに追加</h2>
                     <p>PDFやテキストファイルをアップロードして、RAGシステムに追加できます。</p>
                     
+                    <!-- RAG設定セクション -->
+                    <div class="rag-settings-section">
+                        <h3>🔧 RAG設定</h3>
+                        <div class="rag-settings-grid">
+                            <div class="setting-group">
+                                <label for="corpusNameInput">RAGコーパス名 <span class="required">*</span></label>
+                                <input type="text" id="corpusNameInput" placeholder="例: 技術資料_2025" required>
+                                <small>新しい名前を入力すると自動的に新しいコーパスを作成します</small>
+                            </div>
+                            <div class="setting-group">
+                                <label for="corpusDescriptionInput">コーパス説明（オプション）</label>
+                                <input type="text" id="corpusDescriptionInput" placeholder="このコーパスの説明...">
+                            </div>
+                            <div class="setting-group">
+                                <label for="chunkSizeInput">チャンクサイズ</label>
+                                <input type="number" id="chunkSizeInput" value="512" min="100" max="2048" step="50">
+                                <small>ドキュメントを分割する単位（100-2048文字）</small>
+                            </div>
+                            <div class="setting-group">
+                                <label for="chunkOverlapInput">チャンクオーバーラップ</label>
+                                <input type="number" id="chunkOverlapInput" value="100" min="0" max="500" step="10">
+                                <small>チャンク間の重複部分（0-500文字）</small>
+                            </div>
+                        </div>
+                        <div class="rag-preset-buttons">
+                            <button type="button" class="preset-btn" onclick="applyRagPreset('default')">🎯 標準設定</button>
+                            <button type="button" class="preset-btn" onclick="applyRagPreset('detailed')">📊 詳細分析用</button>
+                            <button type="button" class="preset-btn" onclick="applyRagPreset('quick')">⚡ クイック処理</button>
+                        </div>
+                    </div>
+                    
                     <div class="upload-section">
                         <div class="upload-area" id="uploadArea">
                             <div class="upload-icon">📄</div>
                             <div class="upload-text">
                                 <h3>ファイルをドラッグ&ドロップまたはクリック</h3>
-                                <p>サポート形式: PDF, TXT, DOCX, MD</p>
+                                <p>サポート形式: PDF, TXT, DOCX, MD, PPT, PPTX</p>
                             </div>
-                            <input type="file" id="fileInput" accept=".pdf,.txt,.docx,.md" multiple style="display: none;">
+                            <input type="file" id="fileInput" accept=".pdf,.txt,.docx,.md,.doc,.rtf,.ppt,.pptx" multiple style="display: none;">
                         </div>
                         
                         <div class="upload-progress" id="uploadProgress" style="display: none;">
@@ -116,6 +151,7 @@
                         
                         <div class="upload-results" id="uploadResults" style="display: none;">
                             <h3>アップロード結果</h3>
+                            <div class="upload-summary" id="uploadSummary"></div>
                             <div class="results-list" id="resultsList"></div>
                         </div>
                     </div>
@@ -147,6 +183,98 @@
                 </div>
             </div>
             
+            <!-- Google Drive同期画面 -->
+            <div class="content-panel" id="driveSyncPanel" style="display: none;">
+                <div class="drive-sync-container">
+                    <h2>🔄 Google Drive同期</h2>
+                    <p>Google DriveのフォルダをRAGシステムに同期できます。</p>
+                    
+                    <!-- 認証状態 -->
+                    <div class="auth-status" id="authStatus">
+                        <div class="loading">認証状態を確認中...</div>
+                    </div>
+                    
+                    <!-- 認証ボタン -->
+                    <div class="auth-section" id="authSection" style="display: none;">
+                        <h3>Google認証</h3>
+                        <p>Google Driveにアクセスするために認証が必要です。</p>
+                        <button class="auth-btn" id="authButton">🔐 Googleで認証</button>
+                    </div>
+                    
+                    <!-- 同期設定 -->
+                    <div class="sync-section" id="syncSection" style="display: none;">
+                        <h3>同期設定</h3>
+                        <div class="sync-controls">
+                            <div class="control-group">
+                                <label for="folderName">フォルダ指定:</label>
+                                <input type="text" id="folderName" value="RAG Documents" placeholder="フォルダ名、パス、URL、または共有リンク">
+                                <div class="input-help">
+                                    <small>
+                                        <strong>指定方法:</strong><br>
+                                        • フォルダ名: <code>RAG Documents</code><br>
+                                        • パス: <code>/プロジェクト/RAG Documents</code><br>
+                                        • URL: <code>https://drive.google.com/drive/folders/1ABC...</code><br>
+                                        • フォルダID: <code>1ABC2DEF3GHI...</code>
+                                    </small>
+                                </div>
+                            </div>
+                            <div class="control-group">
+                                <label for="corpusName">コーパス名:</label>
+                                <input type="text" id="corpusName" value="Drive Sync Corpus" placeholder="RAGコーパス名">
+                            </div>
+                            <div class="control-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="forceSync">
+                                    <span class="checkmark"></span>
+                                    強制同期（全ファイルを再同期）
+                                </label>
+                            </div>
+                            <div class="control-group">
+                                <label class="checkbox-label">
+                                    <input type="checkbox" id="recursiveSync">
+                                    <span class="checkmark"></span>
+                                    再帰的探索（サブフォルダも含める）
+                                </label>
+                            </div>
+                            <div class="control-group">
+                                <label for="maxDepth">探索深度:</label>
+                                <input type="number" id="maxDepth" value="3" min="1" max="10" placeholder="最大探索深度">
+                                <div class="input-help">
+                                    <small>再帰的探索時の最大フォルダ階層数（1〜10）</small>
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <div class="sync-actions">
+                            <button class="preview-btn" id="previewButton">👁️ フォルダ確認</button>
+                            <button class="sync-btn" id="syncButton">🔄 同期開始</button>
+                            <button class="clear-auth-btn" id="clearAuthButton">🗑️ 認証クリア</button>
+                        </div>
+                        
+                        <!-- フォルダプレビュー -->
+                        <div class="folder-preview" id="folderPreview" style="display: none;">
+                            <h4>📁 フォルダ情報</h4>
+                            <div class="preview-content" id="previewContent"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- 同期進行状況 -->
+                    <div class="sync-progress" id="syncProgress" style="display: none;">
+                        <h3>同期進行状況</h3>
+                        <div class="progress-info" id="progressInfo">
+                            <div class="progress-text">同期中...</div>
+                        </div>
+                    </div>
+                    
+                    <!-- 同期結果 -->
+                    <div class="sync-results" id="syncResults" style="display: none;">
+                        <h3>同期結果</h3>
+                        <div class="results-summary" id="resultsSummary"></div>
+                        <div class="results-details" id="resultsDetails"></div>
+                    </div>
+                </div>
+            </div>
+            
             <!-- 設定画面 -->
             <div class="content-panel" id="settingsPanel" style="display: none;">
                 <div class="settings-container">
@@ -155,7 +283,25 @@
                     <div class="settings-section">
                         <h3>RAG設定</h3>
                         <div class="setting-item">
-                            <label>RAGコーパスID:</label>
+                            <label>RAGコーパス選択:</label>
+                            <div class="corpus-selector">
+                                <select id="ragCorpusSelect">
+                                    <option value="">読み込み中...</option>
+                                </select>
+                                <button id="loadCorporaBtn" class="btn-small">🔄 更新</button>
+                                <button id="applyCorporaBtn" class="btn-primary">適用</button>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <label>または手動入力:</label>
+                            <div class="corpus-manual-input">
+                                <input type="text" id="manualCorpusId" placeholder="projects/your-project/locations/us-central1/ragCorpora/your-corpus-id" 
+                                       style="width: 100%; font-family: monospace; font-size: 12px;">
+                                <button id="applyManualCorpusBtn" class="btn-primary">手動設定</button>
+                            </div>
+                        </div>
+                        <div class="setting-item">
+                            <label>現在のRAGコーパスID:</label>
                             <input type="text" id="ragCorpusId" readonly value="読み込み中...">
                         </div>
                         <div class="setting-item">
@@ -194,12 +340,14 @@
         const chatPanel = document.getElementById('chatPanel');
         const uploadPanel = document.getElementById('uploadPanel');
         const documentsPanel = document.getElementById('documentsPanel');
+        const driveSyncPanel = document.getElementById('driveSyncPanel');
         const settingsPanel = document.getElementById('settingsPanel');
         
         // 機能アイテム
         const chatFeature = document.getElementById('chatFeature');
         const uploadFeature = document.getElementById('uploadFeature');
         const documentsFeature = document.getElementById('documentsFeature');
+        const driveSyncFeature = document.getElementById('driveSyncFeature');
         const settingsFeature = document.getElementById('settingsFeature');
 
         // Markdownの設定
@@ -281,6 +429,12 @@
             loadDocuments();
         });
 
+        driveSyncFeature.addEventListener('click', () => {
+            showPanel('driveSyncPanel');
+            driveSyncFeature.classList.add('active');
+            loadDriveSyncStatus();
+        });
+
         settingsFeature.addEventListener('click', () => {
             showPanel('settingsPanel');
             settingsFeature.classList.add('active');
@@ -352,6 +506,7 @@
         const progressText = document.getElementById('progressText');
         const uploadResults = document.getElementById('uploadResults');
         const resultsList = document.getElementById('resultsList');
+        const uploadSummary = document.getElementById('uploadSummary');
 
         uploadArea.addEventListener('click', () => {
             fileInput.click();
@@ -393,6 +548,25 @@
             uploadProgress.style.display = 'block';
             uploadResults.style.display = 'none';
             
+            // RAG設定をフォームデータに追加
+            const corpusName = document.getElementById('corpusNameInput').value.trim();
+            const corpusDescription = document.getElementById('corpusDescriptionInput').value.trim();
+            const chunkSize = document.getElementById('chunkSizeInput').value;
+            const chunkOverlap = document.getElementById('chunkOverlapInput').value;
+            
+            // コーパス名が空の場合はデフォルト値を設定
+            if (!corpusName) {
+                const defaultName = `ドキュメント_${new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '')}`;
+                document.getElementById('corpusNameInput').value = defaultName;
+                formData.append('corpus_name', defaultName);
+            } else {
+                formData.append('corpus_name', corpusName);
+            }
+            
+            formData.append('corpus_description', corpusDescription);
+            formData.append('chunk_size', chunkSize);
+            formData.append('chunk_overlap', chunkOverlap);
+            
             const xhr = new XMLHttpRequest();
             
             xhr.upload.onprogress = (e) => {
@@ -425,7 +599,44 @@
         function showUploadResults(response) {
             uploadResults.style.display = 'block';
             resultsList.innerHTML = '';
+            uploadSummary.innerHTML = '';
             
+            // サマリー情報を表示
+            if (response.summary) {
+                const summary = response.summary;
+                let summaryHtml = `
+                    <div class="upload-stats">
+                        <div class="stat-item">
+                            <span class="stat-label">処理ファイル数:</span>
+                            <span class="stat-value">${summary.total_files}</span>
+                        </div>
+                        <div class="stat-item success">
+                            <span class="stat-label">成功:</span>
+                            <span class="stat-value">${summary.success_files}</span>
+                        </div>
+                        <div class="stat-item error">
+                            <span class="stat-label">エラー:</span>
+                            <span class="stat-value">${summary.error_files}</span>
+                        </div>
+                    </div>
+                `;
+                
+                if (summary.corpus_name) {
+                    summaryHtml += `
+                        <div class="corpus-info">
+                            <div class="corpus-item">
+                                <span class="corpus-label">RAGコーパス:</span>
+                                <span class="corpus-value">${summary.corpus_name}</span>
+                                ${summary.corpus_created ? '<span class="corpus-badge">新規作成</span>' : '<span class="corpus-badge existing">既存</span>'}
+                            </div>
+                        </div>
+                    `;
+                }
+                
+                uploadSummary.innerHTML = summaryHtml;
+            }
+            
+            // 各ファイルの結果を表示
             response.results.forEach(result => {
                 const resultItem = document.createElement('div');
                 resultItem.className = `result-item ${result.success ? 'success' : 'error'}`;
@@ -433,11 +644,17 @@
                 const icon = result.success ? '✅' : '❌';
                 const status = result.success ? '成功' : 'エラー';
                 
+                let extraInfo = '';
+                if (result.success && result.corpus_id) {
+                    extraInfo = `<div class="result-extra">コーパスID: ${result.corpus_id.split('/').pop()}</div>`;
+                }
+                
                 resultItem.innerHTML = `
                     <div class="result-icon">${icon}</div>
                     <div class="result-details">
                         <div class="result-filename">${result.filename}</div>
                         <div class="result-status">${status}: ${result.message}</div>
+                        ${extraInfo}
                     </div>
                 `;
                 
@@ -550,6 +767,117 @@
                     console.error('設定の読み込みに失敗しました:', error);
                 });
         }
+
+        // RAGコーパス一覧を読み込み
+        function loadRagCorpora() {
+            const selectElement = document.getElementById('ragCorpusSelect');
+            selectElement.innerHTML = '<option value="">読み込み中...</option>';
+            selectElement.disabled = true;
+
+            fetch('/get_rag_corpora')
+                .then(response => response.json())
+                .then(data => {
+                    selectElement.innerHTML = '';
+                    
+                    if (data.success && data.corpora.length > 0) {
+                        data.corpora.forEach(corpus => {
+                            const option = document.createElement('option');
+                            option.value = corpus.id;
+                            option.textContent = `${corpus.display_name} (${corpus.created_time})`;
+                            option.title = corpus.description || 'コーパスの説明なし';
+                            
+                            // 現在使用中のコーパスを選択状態にする
+                            if (corpus.id === data.current_corpus) {
+                                option.selected = true;
+                            }
+                            
+                            selectElement.appendChild(option);
+                        });
+                        
+                        // 現在のコーパスIDを表示
+                        document.getElementById('ragCorpusId').value = data.current_corpus;
+                    } else {
+                        selectElement.innerHTML = '<option value="">コーパスが見つかりません</option>';
+                    }
+                })
+                .catch(error => {
+                    console.error('RAGコーパス一覧の読み込みに失敗しました:', error);
+                    selectElement.innerHTML = '<option value="">読み込みエラー</option>';
+                })
+                .finally(() => {
+                    selectElement.disabled = false;
+                });
+        }
+
+        // RAGコーパスを適用
+        function applyRagCorpus() {
+            const selectElement = document.getElementById('ragCorpusSelect');
+            const manualCorpusIdInput = document.getElementById('manualCorpusId');
+            const selectedCorpusId = selectElement.value || manualCorpusIdInput.value.trim();
+            
+            if (!selectedCorpusId) {
+                alert('コーパスを選択または手動入力してください。');
+                return;
+            }
+            
+            if (confirm('選択したRAGコーパスに変更しますか？\n注意: これ以降の質問回答は新しいコーパスのデータを使用します。')) {
+                const applyBtn = document.getElementById('applyCorporaBtn');
+                const originalText = applyBtn.textContent;
+                applyBtn.disabled = true;
+                applyBtn.textContent = '適用中...';
+                
+                fetch('/set_rag_corpus', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        corpus_id: selectedCorpusId
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert(data.message);
+                        // 設定を再読み込み
+                        loadSettings();
+                        loadRagCorpora();
+                    } else {
+                        alert(`コーパス変更に失敗しました: ${data.error}`);
+                    }
+                })
+                .catch(error => {
+                    console.error('RAGコーパス変更エラー:', error);
+                    alert('コーパス変更中にエラーが発生しました。');
+                })
+                .finally(() => {
+                    applyBtn.disabled = false;
+                    applyBtn.textContent = originalText;
+                });
+            }
+        }
+
+        // イベントリスナーを設定
+        document.addEventListener('DOMContentLoaded', function() {
+            // デフォルトでチャット画面を表示
+            showPanel('chatPanel');
+            chatFeature.classList.add('active');
+            
+            // 認証結果をチェック
+            checkAuthResult();
+            
+            // RAGコーパス関連のイベントリスナー
+            document.getElementById('loadCorporaBtn').addEventListener('click', loadRagCorpora);
+            document.getElementById('applyCorporaBtn').addEventListener('click', applyRagCorpus);
+            document.getElementById('applyManualCorpusBtn').addEventListener('click', applyRagCorpus); // 手動入力ボタンも同じイベントリスナーに
+            
+            // 設定画面を開いたときにRAGコーパス一覧も読み込み
+            const originalLoadSettings = loadSettings;
+            window.loadSettings = function() {
+                originalLoadSettings();
+                loadRagCorpora();
+            };
+        });
 
         // 検索機能
         document.getElementById('searchDocuments').addEventListener('input', (e) => {
@@ -689,12 +1017,409 @@
             loadDocuments(); // データソースが変わったら再読み込み
         });
 
-        // 初期化
-        document.addEventListener('DOMContentLoaded', () => {
-            // デフォルトでチャット画面を表示
-            showPanel('chatPanel');
-            chatFeature.classList.add('active');
+        // Google Drive同期機能
+        function loadDriveSyncStatus() {
+            const authStatus = document.getElementById('authStatus');
+            const authSection = document.getElementById('authSection');
+            const syncSection = document.getElementById('syncSection');
+            
+            authStatus.innerHTML = '<div class="loading">認証状態を確認中...</div>';
+            authSection.style.display = 'none';
+            syncSection.style.display = 'none';
+            
+            fetch('/drive/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.authenticated) {
+                        // 認証済み
+                        authStatus.innerHTML = `
+                            <div class="auth-success">
+                                <span class="status-icon">✅</span>
+                                <div class="status-info">
+                                    <div class="status-title">認証済み</div>
+                                    <div class="status-details">
+                                        ${data.user_email ? `ユーザー: ${data.user_email}` : ''}
+                                        ${data.last_sync ? `<br>最終同期: ${new Date(data.last_sync).toLocaleString('ja-JP')}` : ''}
+                                        ${data.synced_files_count ? `<br>同期済みファイル: ${data.synced_files_count}件` : ''}
+                                    </div>
+                                </div>
+                            </div>
+                        `;
+                        syncSection.style.display = 'block';
+                    } else {
+                        // 未認証
+                        authStatus.innerHTML = `
+                            <div class="auth-required">
+                                <span class="status-icon">⚠️</span>
+                                <div class="status-info">
+                                    <div class="status-title">認証が必要です</div>
+                                    <div class="status-details">Google Driveにアクセスするために認証してください</div>
+                                </div>
+                            </div>
+                        `;
+                        authSection.style.display = 'block';
+                    }
+                })
+                .catch(error => {
+                    console.error('認証状態取得エラー:', error);
+                    authStatus.innerHTML = `
+                        <div class="auth-error">
+                            <span class="status-icon">❌</span>
+                            <div class="status-info">
+                                <div class="status-title">エラー</div>
+                                <div class="status-details">認証状態の取得に失敗しました</div>
+                            </div>
+                        </div>
+                    `;
+                });
+        }
+
+        // 認証ボタンのイベントリスナー
+        document.getElementById('authButton').addEventListener('click', () => {
+            window.location.href = '/auth/google';
         });
+
+        // 同期ボタンのイベントリスナー
+        document.getElementById('syncButton').addEventListener('click', () => {
+            const folderName = document.getElementById('folderName').value.trim();
+            const corpusName = document.getElementById('corpusName').value.trim();
+            const forceSync = document.getElementById('forceSync').checked;
+            const recursiveSync = document.getElementById('recursiveSync').checked;
+            const maxDepth = document.getElementById('maxDepth').value;
+            
+            if (!folderName || !corpusName) {
+                alert('フォルダ名とコーパス名を入力してください');
+                return;
+            }
+            
+            startSync(folderName, corpusName, forceSync, recursiveSync, maxDepth);
+        });
+
+        // フォルダプレビューボタンのイベントリスナー
+        document.getElementById('previewButton').addEventListener('click', () => {
+            const folderInput = document.getElementById('folderName').value.trim();
+            
+            if (!folderInput) {
+                alert('フォルダを指定してください');
+                return;
+            }
+            
+            previewFolder(folderInput);
+        });
+
+        // 認証クリアボタンのイベントリスナー
+        document.getElementById('clearAuthButton').addEventListener('click', () => {
+            if (confirm('認証情報をクリアしますか？再度認証が必要になります。')) {
+                fetch('/drive/clear_auth', { method: 'POST' })
+                    .then(response => response.json())
+                    .then(data => {
+                        alert(data.message);
+                        loadDriveSyncStatus();
+                    })
+                    .catch(error => {
+                        console.error('認証クリアエラー:', error);
+                        alert('認証クリアに失敗しました');
+                    });
+            }
+        });
+
+        function previewFolder(folderInput) {
+            const folderPreview = document.getElementById('folderPreview');
+            const previewContent = document.getElementById('previewContent');
+            const previewButton = document.getElementById('previewButton');
+            const recursiveSync = document.getElementById('recursiveSync').checked;
+            const maxDepth = document.getElementById('maxDepth').value;
+            
+            // プレビューボタンを無効化
+            previewButton.disabled = true;
+            previewButton.textContent = '確認中...';
+            
+            // プレビュー表示
+            folderPreview.style.display = 'block';
+            previewContent.innerHTML = '<div class="loading">フォルダ情報を取得中...</div>';
+            
+            fetch('/drive/folder/info', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    folder_input: folderInput,
+                    recursive_preview: recursiveSync,
+                    max_depth: maxDepth
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.success) {
+                    const folder = data.folder;
+                    let previewHtml = `
+                        <div class="preview-success">
+                            <div class="preview-item">
+                                <strong>📁 フォルダ名:</strong> ${folder.name}
+                            </div>
+                            <div class="preview-item">
+                                <strong>📍 パス:</strong> ${folder.path}
+                            </div>
+                            <div class="preview-item">
+                                <strong>📄 総ファイル数:</strong> ${folder.file_count}件
+                            </div>
+                            <div class="preview-item">
+                                <strong>✅ 対応ファイル数:</strong> ${folder.supported_files}件
+                            </div>`;
+                    
+                    // 再帰的探索の場合は追加情報を表示
+                    if (folder.recursive_mode) {
+                        previewHtml += `
+                            <div class="preview-item">
+                                <strong>🔄 探索モード:</strong> 再帰的探索（最大深度: ${folder.max_depth}）
+                            </div>`;
+                        
+                        // 深度別統計があれば表示
+                        if (folder.depth_stats && Object.keys(folder.depth_stats).length > 0) {
+                            previewHtml += `
+                                <div class="preview-item">
+                                    <strong>📊 深度別ファイル数:</strong>
+                                    <div class="depth-stats">`;
+                            
+                            Object.keys(folder.depth_stats).sort((a, b) => parseInt(a) - parseInt(b)).forEach(depth => {
+                                previewHtml += `<div class="depth-item">深度${depth}: ${folder.depth_stats[depth]}件</div>`;
+                            });
+                            
+                            previewHtml += `</div></div>`;
+                        }
+                    } else {
+                        previewHtml += `
+                            <div class="preview-item">
+                                <strong>🔄 探索モード:</strong> 直下のファイルのみ
+                            </div>`;
+                    }
+                    
+                    previewHtml += `
+                            <div class="preview-item">
+                                <strong>🔗 フォルダID:</strong> <code>${folder.id}</code>
+                            </div>
+                            ${folder.created_time ? `
+                                <div class="preview-item">
+                                    <strong>📅 作成日:</strong> ${new Date(folder.created_time).toLocaleString('ja-JP')}
+                                </div>
+                            ` : ''}
+                            ${folder.web_view_link ? `
+                                <div class="preview-item">
+                                    <strong>🔗 リンク:</strong> <a href="${folder.web_view_link}" target="_blank">Google Driveで開く</a>
+                                </div>
+                            ` : ''}
+                        </div>
+                    `;
+                    
+                    previewContent.innerHTML = previewHtml;
+                } else {
+                    previewContent.innerHTML = `
+                        <div class="preview-error">
+                            <div class="error-icon">❌</div>
+                            <div class="error-message">
+                                <strong>エラー:</strong> ${data.error}<br>
+                                <strong>入力値:</strong> ${data.input}
+                            </div>
+                            <div class="error-help">
+                                <strong>確認事項:</strong>
+                                <ul>
+                                    <li>フォルダ名が正確か確認してください</li>
+                                    <li>URLの場合は完全なURLを入力してください</li>
+                                    <li>フォルダへのアクセス権限があるか確認してください</li>
+                                </ul>
+                            </div>
+                        </div>
+                    `;
+                }
+            })
+            .catch(error => {
+                console.error('フォルダプレビューエラー:', error);
+                previewContent.innerHTML = `
+                    <div class="preview-error">
+                        <div class="error-icon">❌</div>
+                        <div class="error-message">
+                            フォルダ情報の取得に失敗しました
+                        </div>
+                    </div>
+                `;
+            })
+            .finally(() => {
+                // プレビューボタンを有効化
+                previewButton.disabled = false;
+                previewButton.textContent = '👁️ フォルダ確認';
+            });
+        }
+
+        function startSync(folderName, corpusName, forceSync, recursiveSync, maxDepth) {
+            const syncProgress = document.getElementById('syncProgress');
+            const syncResults = document.getElementById('syncResults');
+            const progressInfo = document.getElementById('progressInfo');
+            
+            // 進行状況を表示
+            syncProgress.style.display = 'block';
+            syncResults.style.display = 'none';
+            progressInfo.innerHTML = '<div class="progress-text">同期を開始しています...</div>';
+            
+            // 同期ボタンを無効化
+            const syncButton = document.getElementById('syncButton');
+            syncButton.disabled = true;
+            syncButton.textContent = '同期中...';
+            
+            fetch('/drive/sync', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    folder_name: folderName,
+                    corpus_name: corpusName,
+                    force_sync: forceSync,
+                    recursive_sync: recursiveSync,
+                    max_depth: maxDepth
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // 進行状況を隠す
+                syncProgress.style.display = 'none';
+                
+                // 結果を表示
+                displaySyncResults(data);
+                
+                // 認証状態を更新
+                loadDriveSyncStatus();
+            })
+            .catch(error => {
+                console.error('同期エラー:', error);
+                syncProgress.style.display = 'none';
+                
+                const errorResult = {
+                    success: false,
+                    error: '同期処理でエラーが発生しました'
+                };
+                displaySyncResults(errorResult);
+            })
+            .finally(() => {
+                // 同期ボタンを有効化
+                syncButton.disabled = false;
+                syncButton.textContent = '🔄 同期開始';
+            });
+        }
+
+        function displaySyncResults(data) {
+            const syncResults = document.getElementById('syncResults');
+            const resultsSummary = document.getElementById('resultsSummary');
+            const resultsDetails = document.getElementById('resultsDetails');
+            
+            syncResults.style.display = 'block';
+            
+            if (data.success) {
+                resultsSummary.innerHTML = `
+                    <div class="results-success">
+                        <span class="result-icon">✅</span>
+                        <div class="result-info">
+                            <div class="result-title">同期完了</div>
+                            <div class="result-stats">
+                                ${data.total_files}件中 ${data.added_files}件を追加、${data.skipped_files}件をスキップ
+                            </div>
+                            ${data.recursive_mode ? `
+                                <div class="result-mode">
+                                    🔄 再帰的探索モード（最大深度: ${data.max_depth}）
+                                </div>
+                            ` : `
+                                <div class="result-mode">
+                                    📁 直下ファイルのみの同期
+                                </div>
+                            `}
+                        </div>
+                    </div>
+                `;
+                
+                let detailsHtml = `
+                    <h4>📊 同期詳細</h4>
+                    <ul>
+                        <li>処理済みファイル: ${data.processed_files}件</li>
+                        <li>追加ファイル: ${data.added_files}件</li>
+                        <li>スキップファイル: ${data.skipped_files}件</li>
+                        <li>エラーファイル: ${data.error_files}件</li>
+                    </ul>
+                `;
+                
+                if (data.errors && data.errors.length > 0) {
+                    detailsHtml += `
+                        <h4>❌ エラー詳細</h4>
+                        <ul class="error-list">
+                            ${data.errors.map(error => `<li>${error}</li>`).join('')}
+                        </ul>
+                    `;
+                }
+                
+                resultsDetails.innerHTML = detailsHtml;
+            } else {
+                resultsSummary.innerHTML = `
+                    <div class="results-error">
+                        <span class="result-icon">❌</span>
+                        <div class="result-info">
+                            <div class="result-title">同期失敗</div>
+                            <div class="result-error">${data.error}</div>
+                        </div>
+                    </div>
+                `;
+                
+                if (data.auth_required) {
+                    resultsDetails.innerHTML = `
+                        <p>認証が必要です。<a href="/auth/google">こちら</a>から認証してください。</p>
+                    `;
+                } else {
+                    resultsDetails.innerHTML = '';
+                }
+            }
+        }
+
+        // URL パラメータをチェックして認証結果を表示
+        function checkAuthResult() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const authResult = urlParams.get('auth');
+            
+            if (authResult === 'success') {
+                alert('Google認証が完了しました！');
+                // URLパラメータをクリア
+                window.history.replaceState({}, document.title, window.location.pathname);
+                // Drive同期画面を表示
+                showPanel('driveSyncPanel');
+                driveSyncFeature.classList.add('active');
+                loadDriveSyncStatus();
+            } else if (authResult === 'error') {
+                alert('Google認証に失敗しました。再度お試しください。');
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
+
+        // RAGコーパスプリセット設定
+        function applyRagPreset(presetName) {
+            const corpusNameInput = document.getElementById('corpusNameInput');
+            const corpusDescriptionInput = document.getElementById('corpusDescriptionInput');
+            const chunkSizeInput = document.getElementById('chunkSizeInput');
+            const chunkOverlapInput = document.getElementById('chunkOverlapInput');
+
+            if (presetName === 'default') {
+                corpusNameInput.value = 'デフォルトコーパス';
+                corpusDescriptionInput.value = 'デフォルトのRAGコーパスです。';
+                chunkSizeInput.value = '512';
+                chunkOverlapInput.value = '100';
+            } else if (presetName === 'detailed') {
+                corpusNameInput.value = '詳細分析コーパス';
+                corpusDescriptionInput.value = 'より詳細な分析を行うためのコーパスです。';
+                chunkSizeInput.value = '1024';
+                chunkOverlapInput.value = '200';
+            } else if (presetName === 'quick') {
+                corpusNameInput.value = 'クイック処理コーパス';
+                corpusDescriptionInput.value = '高速に処理するためのコーパスです。';
+                chunkSizeInput.value = '256';
+                chunkOverlapInput.value = '50';
+            }
+        }
     </script>
 </body>
 </html> 
