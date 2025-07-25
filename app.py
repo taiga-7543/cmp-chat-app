@@ -4,11 +4,8 @@ from google import genai
 from google.genai import types
 import json
 import os
-import asyncio
-import time
 import re
 from datetime import datetime
-import tempfile
 import hashlib
 import base64
 import gc
@@ -28,6 +25,133 @@ GEMINI_MODEL = os.environ.get('GEMINI_MODEL', 'gemini-2.5-flash')
 # 認証設定
 AUTH_USERNAME = os.environ.get('AUTH_USERNAME', 'u7F3kL9pQ2zX')
 AUTH_PASSWORD = os.environ.get('AUTH_PASSWORD', 's8Vn2BqT5wXc')
+
+# RAGシステム共通設定
+RAG_SYSTEM_PROMPT = """あなたはRAG（Retrieval-Augmented Generation）システムです。以下のルールに厳密に従って回答してください：
+
+1. **RAG検索結果のみを使用**: 提供された検索結果（retrieved content）の情報のみを使用して回答してください
+2. **一般知識の禁止**: あなたの事前学習データや一般的な知識は一切使用しないでください
+3. **情報がない場合**: RAG検索結果に関連情報がない場合は「提供された資料には該当する情報が見つかりませんでした」と回答してください
+4. **引用の明確化**: 回答には必ずRAG検索結果から取得した情報であることを明示してください
+5. **推測の禁止**: 検索結果にない情報については推測や補完を行わないでください
+6. **完全な依存**: 回答の根拠は100%検索結果に基づいている必要があります
+
+これらのルールを絶対に守って、以下の質問に回答してください。"""
+
+# デフォルト質問リスト生成
+def generate_default_questions(user_message):
+    """デフォルトの関連質問リストを生成"""
+    return [
+        f"{user_message}の基本的な定義とは何ですか？",
+        f"{user_message}の具体的な事例を教えてください",
+        f"{user_message}のメリットとデメリットは何ですか？",
+        f"{user_message}の最新の動向はどうですか？",
+        f"{user_message}に関連する技術や手法はありますか？"
+    ]
+
+# 共通設定作成関数
+def create_rag_tools():
+    """RAGツール設定を作成"""
+    return [
+        types.Tool(
+            retrieval=types.Retrieval(
+                vertex_rag_store=types.VertexRagStore(
+                    rag_resources=[
+                        types.VertexRagStoreRagResource(
+                            rag_corpus=RAG_CORPUS
+                        )
+                    ],
+                )
+            )
+        )
+    ]
+
+def create_safety_settings():
+    """セーフティ設定を作成"""
+    return [
+        types.SafetySetting(category="HARM_CATEGORY_HATE_SPEECH", threshold="OFF"),
+        types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="OFF"),
+        types.SafetySetting(category="HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold="OFF"),
+        types.SafetySetting(category="HARM_CATEGORY_HARASSMENT", threshold="OFF")
+    ]
+
+def create_generate_config(temperature=0.8, top_p=0.9, max_tokens=65536, include_tools=True, include_thinking=False, seed=None):
+    """GenerateContentConfigを作成"""
+    config_params = {
+        'temperature': temperature,
+        'top_p': top_p,
+        'max_output_tokens': max_tokens,
+        'safety_settings': create_safety_settings(),
+    }
+    
+    if seed is not None:
+        config_params['seed'] = seed
+    
+    if include_tools:
+        config_params['tools'] = create_rag_tools()
+    
+    if include_thinking:
+        # ThinkingConfigが利用可能な場合のみ追加
+        try:
+            thinking_config_available = False
+            if hasattr(types, 'ThinkingConfig'):
+                test_config = types.ThinkingConfig(thinking_budget=-1)
+                thinking_config_available = True
+            else:
+                from google.genai.types import ThinkingConfig
+                test_config = ThinkingConfig(thinking_budget=-1)
+                thinking_config_available = True
+            
+            if thinking_config_available:
+                config_params['thinking_config'] = types.ThinkingConfig(thinking_budget=-1)
+        except (AttributeError, TypeError, ValueError, ImportError):
+            pass  # ThinkingConfigが利用できない場合は無視
+    
+    # 安全にGenerateContentConfigを作成
+    try:
+        return types.GenerateContentConfig(**config_params)
+    except Exception:
+        # ThinkingConfigを除外して再試行
+        if 'thinking_config' in config_params:
+            del config_params['thinking_config']
+            return types.GenerateContentConfig(**config_params)
+
+def extract_grounding_metadata(response_or_chunk):
+    """レスポンスまたはチャンクからグラウンディングメタデータを抽出"""
+    grounding_metadata = None
+    
+    # レスポンスオブジェクトの場合
+    if hasattr(response_or_chunk, 'candidates') and response_or_chunk.candidates:
+        candidate = response_or_chunk.candidates[0]
+        if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
+            grounding_metadata = candidate.grounding_metadata
+    
+    # チャンクオブジェクトの場合
+    if hasattr(response_or_chunk, 'grounding_metadata') and response_or_chunk.grounding_metadata:
+        grounding_metadata = response_or_chunk.grounding_metadata
+    
+    # チャンクの候補から取得
+    if hasattr(response_or_chunk, 'candidates') and response_or_chunk.candidates:
+        candidate = response_or_chunk.candidates[0]
+        
+        # 候補1: candidate.grounding_metadata
+        if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
+            grounding_metadata = candidate.grounding_metadata
+        
+        # 候補2: candidate.content.grounding_metadata
+        if hasattr(candidate, 'content') and hasattr(candidate.content, 'grounding_metadata') and candidate.content.grounding_metadata:
+            grounding_metadata = candidate.content.grounding_metadata
+    
+    return grounding_metadata
+
+def handle_rag_error(error, context=""):
+    """RAGエラーの統一ハンドリング"""
+    error_msg = f"エラーが発生しました: {str(error)}"
+    if context:
+        print(f"Error in {context}: {error}")
+    else:
+        print(f"RAG Error: {error}")
+    return error_msg
 
 @auth.verify_password
 def verify_password(username, password):
@@ -98,12 +222,13 @@ def setup_google_auth():
     """Google Cloud認証を設定"""
     # 環境変数からサービスアカウントキーのJSONを読み込む
     credentials_json = os.environ.get('GOOGLE_APPLICATION_CREDENTIALS_JSON')
+    
     if credentials_json:
         try:
-            # JSONの妥当性を確認
+            # JSONの妥当性をチェック
             parsed_json = json.loads(credentials_json)
             
-            # 必要なフィールドが存在するか確認
+            # 必要なフィールドが含まれているかチェック
             required_fields = ['type', 'project_id', 'private_key_id', 'private_key', 'client_email']
             missing_fields = [field for field in required_fields if field not in parsed_json]
             
@@ -119,11 +244,8 @@ def setup_google_auth():
                     print("INFO: Fixed private key Base64 padding")
                     parsed_json['private_key'] = fixed_key
             
-            # JSONをファイルに書き込んで認証設定
-            with tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False) as f:
-                json.dump(parsed_json, f, indent=2)
-                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = f.name
-                print(f"Google Cloud credentials file created: {f.name}")
+            # 環境変数として直接設定（ファイル作成不要）
+            os.environ['GOOGLE_APPLICATION_CREDENTIALS_JSON'] = json.dumps(parsed_json)
                 
         except json.JSONDecodeError as e:
             print(f"Error: Invalid JSON in GOOGLE_APPLICATION_CREDENTIALS_JSON: {e}")
@@ -139,14 +261,9 @@ def setup_google_auth():
         print("以下の環境変数のいずれかを設定してください:")
         print("- GOOGLE_APPLICATION_CREDENTIALS: サービスアカウントキーファイルのパス")
         print("- GOOGLE_APPLICATION_CREDENTIALS_JSON: サービスアカウントキーのJSON文字列")
-    elif os.environ.get('GOOGLE_APPLICATION_CREDENTIALS'):
-        print(f"Using existing Google Cloud credentials file: {os.environ.get('GOOGLE_APPLICATION_CREDENTIALS')}")
 
 # 認証設定を初期化
 setup_google_auth()
-
-# メモリ管理の設定
-gc.set_threshold(700, 10, 10)  # より積極的なガベージコレクション
 
 def create_rag_client():
     """RAGクライアントを作成"""
@@ -216,45 +333,31 @@ def sort_sources_by_date(sources):
     return sorted(sources, key=get_sort_key)
 
 def convert_grounding_metadata_to_dict(grounding_metadata):
-    """GroundingMetadataオブジェクトを辞書に変換し、日付順にソート"""
-    if not grounding_metadata:
-        print("DEBUG: grounding_metadata is None")
+    """グラウンディングメタデータを辞書形式に変換"""
+    if grounding_metadata is None:
         return None
     
-    print(f"DEBUG: grounding_metadata type: {type(grounding_metadata)}")
-    print(f"DEBUG: grounding_metadata attributes: {dir(grounding_metadata)}")
-    
-    result = {}
-    
-    # grounding_chunksを処理
-    if hasattr(grounding_metadata, 'grounding_chunks') and grounding_metadata.grounding_chunks:
-        print(f"DEBUG: Found {len(grounding_metadata.grounding_chunks)} grounding chunks")
-        unsorted_chunks = []
+    try:
+        grounding_chunks = grounding_metadata.grounding_chunks
         
-        for i, chunk in enumerate(grounding_metadata.grounding_chunks):
-            print(f"DEBUG: Processing chunk {i}: {type(chunk)}")
-            print(f"DEBUG: Chunk attributes: {dir(chunk)}")
-            
+        unsorted_chunks = []
+        for i, chunk in enumerate(grounding_chunks):
             chunk_dict = {}
             
-            # retrieved_contextからtitleとuriを取得
+            # 基本情報を取得
             if hasattr(chunk, 'retrieved_context') and chunk.retrieved_context:
-                print(f"DEBUG: Found retrieved_context: {type(chunk.retrieved_context)}")
                 retrieved_context = chunk.retrieved_context
                 
                 # titleを取得
                 if hasattr(retrieved_context, 'title') and retrieved_context.title:
                     chunk_dict['title'] = retrieved_context.title
-                    print(f"DEBUG: Found title in retrieved_context: {retrieved_context.title}")
                 
                 # uriを取得
                 if hasattr(retrieved_context, 'uri') and retrieved_context.uri:
                     chunk_dict['uri'] = retrieved_context.uri
-                    print(f"DEBUG: Found uri in retrieved_context: {retrieved_context.uri}")
             
             # webプロパティも確認（念のため）
             if hasattr(chunk, 'web') and chunk.web:
-                print(f"DEBUG: Found web property: {chunk.web}")
                 if not chunk_dict.get('title') and hasattr(chunk.web, 'title'):
                     chunk_dict['title'] = chunk.web.title
                 if not chunk_dict.get('uri') and hasattr(chunk.web, 'uri'):
@@ -263,37 +366,22 @@ def convert_grounding_metadata_to_dict(grounding_metadata):
             # 直接的なtitle/uriプロパティも確認
             if not chunk_dict.get('title') and hasattr(chunk, 'title'):
                 chunk_dict['title'] = chunk.title
-                print(f"DEBUG: Found direct title: {chunk.title}")
             if not chunk_dict.get('uri') and hasattr(chunk, 'uri'):
                 chunk_dict['uri'] = chunk.uri
-                print(f"DEBUG: Found direct uri: {chunk.uri}")
-            
-            # 日付情報を抽出してデバッグ出力
-            if chunk_dict.get('title'):
-                extracted_date = extract_date_from_filename(chunk_dict['title'])
-                if extracted_date:
-                    print(f"DEBUG: Extracted date from title '{chunk_dict['title']}': {extracted_date.strftime('%Y-%m-%d')}")
-                else:
-                    print(f"DEBUG: No date found in title '{chunk_dict['title']}'")
             
             unsorted_chunks.append(chunk_dict)
         
-        # 日付順にソート（新しい日付を優先）
+        # 日付でソート
         sorted_chunks = sort_sources_by_date(unsorted_chunks)
-        result['grounding_chunks'] = sorted_chunks
         
-        print(f"DEBUG: Sorted chunks by date:")
-        for i, chunk in enumerate(sorted_chunks):
-            title = chunk.get('title', 'タイトルなし')
-            date = extract_date_from_filename(title)
-            date_str = date.strftime('%Y-%m-%d') if date else '日付なし'
-            print(f"  {i+1}. {title} ({date_str})")
+        result = {
+            'grounding_chunks': sorted_chunks
+        }
         
-    else:
-        print("DEBUG: No grounding_chunks found")
-    
-    print(f"DEBUG: Final result: {result}")
-    return result
+        return result
+        
+    except Exception as e:
+        return None
 
 def generate_plan_and_questions(user_message):
     """ユーザーの質問から計画と関連質問を生成"""
@@ -318,6 +406,7 @@ def generate_plan_and_questions(user_message):
 5. [関連質問5]
 
 関連質問は以下の観点から作成してください：
+- "製品含有化学物質管理"の文脈
 - 基本的な定義や概念
 - 具体的な事例や応用
 - メリット・デメリット
@@ -334,11 +423,7 @@ def generate_plan_and_questions(user_message):
             )
         ]
         
-        config = types.GenerateContentConfig(
-            temperature=0.7,
-            top_p=0.9,
-            max_output_tokens=1000,
-        )
+        config = create_generate_config(temperature=0.7, include_tools=False)
         
         response = client.models.generate_content(
             model=GEMINI_MODEL,
@@ -375,38 +460,36 @@ def generate_plan_and_questions(user_message):
 5. {user_message}に関連する技術や手法はありますか？
 """
 
+def generate_default_plan_and_questions(user_message):
+    """デフォルトの計画と関連質問を生成"""
+    return f"""
+## 調査計画
+{user_message}について詳細に調査します。
+
+## 関連質問リスト
+1. {user_message}の基本的な定義とは何ですか？
+2. {user_message}の具体的な事例を教えてください
+3. {user_message}のメリットとデメリットは何ですか？
+4. {user_message}の最新の動向はどうですか？
+5. {user_message}に関連する技術や手法はありますか？
+"""
+
 def execute_single_rag_query(question):
     """単一のRAGクエリを実行"""
     try:
         client = create_rag_client()
         
+        # システムプロンプトをユーザーメッセージに統合
+        combined_message = f"{RAG_SYSTEM_PROMPT}\n\n質問: {question}"
+        
         contents = [
             types.Content(
                 role="user",
-                parts=[types.Part(text=question)]
+                parts=[types.Part(text=combined_message)]
             )
         ]
         
-        tools = [
-            types.Tool(
-                retrieval=types.Retrieval(
-                    vertex_rag_store=types.VertexRagStore(
-                        rag_resources=[
-                            types.VertexRagStoreRagResource(
-                                rag_corpus=RAG_CORPUS
-                            )
-                        ],
-                    )
-                )
-            )
-        ]
-
-        config = types.GenerateContentConfig(
-            temperature=0.8,
-            top_p=0.9,
-            max_output_tokens=2000,
-            tools=tools,
-        )
+        config = create_generate_config()
         
         response = client.models.generate_content(
             model=GEMINI_MODEL,
@@ -415,18 +498,13 @@ def execute_single_rag_query(question):
         )
         
         # グラウンディングメタデータを取得
-        grounding_metadata = None
-        if hasattr(response, 'candidates') and response.candidates:
-            candidate = response.candidates[0]
-            if hasattr(candidate, 'grounding_metadata') and candidate.grounding_metadata:
-                grounding_metadata = candidate.grounding_metadata
+        grounding_metadata = extract_grounding_metadata(response)
         
         answer_text = response.text if response and response.text else "回答を取得できませんでした。"
         return answer_text, grounding_metadata
         
     except Exception as e:
-        print(f"Error in execute_single_rag_query: {e}")
-        return f"エラーが発生しました: {str(e)}", None
+        return handle_rag_error(e, "execute_single_rag_query"), None
 
 def synthesize_comprehensive_answer(user_message, plan_text, qa_results):
     """計画と各質問の回答を統合して包括的な回答を生成"""
@@ -436,6 +514,8 @@ def synthesize_comprehensive_answer(user_message, plan_text, qa_results):
     
     synthesis_prompt = f"""
 以下の情報を基に、ユーザーの質問に対する包括的で詳細な回答を作成してください。
+
+**重要**: 以下の調査結果のみを使用して回答してください。あなたの一般的な知識や事前学習データは一切使用しないでください。
 
 元の質問: {user_message}
 
@@ -447,11 +527,13 @@ def synthesize_comprehensive_answer(user_message, plan_text, qa_results):
 
 以下の要件に従って回答を作成してください：
 1. 元の質問に直接答える
-2. 関連質問の回答から得られた情報を統合する
+2. 関連質問の回答から得られた情報のみを統合する
 3. 論理的で読みやすい構成にする
 4. 重要なポイントを強調する
-5. 具体例があれば含める
+5. 具体例があれば含める（ただし上記の調査結果にあるもののみ）
 6. Markdown形式で整理する
+7. 上記の調査結果にない情報については言及しない
+8. 情報が不足している場合は「調査結果では〇〇について詳細な情報が見つかりませんでした」と明記する
 
 回答は以下の構成を参考にしてください：
 - 概要・定義
@@ -469,11 +551,7 @@ def synthesize_comprehensive_answer(user_message, plan_text, qa_results):
         )
     ]
     
-    config = types.GenerateContentConfig(
-        temperature=0.7,
-        top_p=0.9,
-        max_output_tokens=4000,
-    )
+    config = create_generate_config(temperature=0.7, include_tools=False)
     
     response = client.models.generate_content(
         model=GEMINI_MODEL,
@@ -483,7 +561,7 @@ def synthesize_comprehensive_answer(user_message, plan_text, qa_results):
     
     return response.text
 
-def generate_deep_response(user_message):
+def generate_deep_response(user_message, generate_questions=False):
     """深掘り機能付きのレスポンス生成"""
     try:
         # ステップ1: 計画立てと関連質問生成
@@ -494,20 +572,15 @@ def generate_deep_response(user_message):
             'step': 'planning'
         }
         
-        plan_text = generate_plan_and_questions(user_message)
+        if generate_questions:
+            # AIによる関連質問生成
+            plan_text = generate_plan_and_questions(user_message)
+        else:
+            # デフォルトの関連質問を使用
+            plan_text = generate_default_plan_and_questions(user_message)
         
         if not plan_text:
-            plan_text = f"""
-## 調査計画
-{user_message}について詳細に調査します。
-
-## 関連質問リスト
-1. {user_message}の基本的な定義とは何ですか？
-2. {user_message}の具体的な事例を教えてください
-3. {user_message}のメリットとデメリットは何ですか？
-4. {user_message}の最新の動向はどうですか？
-5. {user_message}に関連する技術や手法はありますか？
-"""
+            plan_text = generate_default_plan_and_questions(user_message)
         
         yield {
             'chunk': f'\n{plan_text}\n\n## 🔍 詳細調査を開始...\n',
@@ -533,23 +606,11 @@ def generate_deep_response(user_message):
                             questions.append(question)
         except Exception as e:
             print(f"Error extracting questions: {e}")
-            questions = [
-                f"{user_message}の基本的な定義とは何ですか？",
-                f"{user_message}の具体的な事例を教えてください",
-                f"{user_message}のメリットとデメリットは何ですか？",
-                f"{user_message}の最新の動向はどうですか？",
-                f"{user_message}に関連する技術や手法はありますか？"
-            ]
+            questions = generate_default_questions(user_message)
         
         # 質問が少ない場合のフォールバック
         if len(questions) < 3:
-            questions = [
-                f"{user_message}の基本的な定義とは何ですか？",
-                f"{user_message}の具体的な事例を教えてください",
-                f"{user_message}のメリットとデメリットは何ですか？",
-                f"{user_message}の最新の動向はどうですか？",
-                f"{user_message}に関連する技術や手法はありますか？"
-            ]
+            questions = generate_default_questions(user_message)
         
         # ステップ2: 各関連質問を順次実行
         qa_results = []
@@ -696,7 +757,7 @@ def generate_deep_response(user_message):
         except Exception as fallback_error:
             print(f"Fallback error: {fallback_error}")
             yield {
-                'chunk': f'\n❌ 回答の生成に失敗しました: {str(fallback_error)}\n',
+                'chunk': f'\n❌ 回答の生成に失敗しました: {handle_rag_error(fallback_error)}\n',
                 'done': True,
                 'grounding_metadata': None,
                 'step': 'fallback_error'
@@ -706,159 +767,37 @@ def generate_response(user_message):
     """ユーザーメッセージに対してRAGを使用してレスポンスを生成"""
     client = create_rag_client()
     
+    # システムプロンプトをユーザーメッセージに統合
+    combined_message = f"{RAG_SYSTEM_PROMPT}\n\n質問: {user_message}"
+    
     contents = [
         types.Content(
             role="user",
             parts=[
-                types.Part(text=user_message)
+                types.Part(text=combined_message)
             ]
         )
     ]
-    tools = [
-        types.Tool(
-            retrieval=types.Retrieval(
-                vertex_rag_store=types.VertexRagStore(
-                    rag_resources=[
-                        types.VertexRagStoreRagResource(
-                            rag_corpus=RAG_CORPUS
-                        )
-                    ],
-                )
-            )
-        )
-    ]
-
+    
     # GenerateContentConfigを作成
-    config_params = {
-        'temperature': 1,
-        'top_p': 1,
-        'seed': 0,
-        'max_output_tokens': 65535,
-        'safety_settings': [
-            types.SafetySetting(
-                category="HARM_CATEGORY_HATE_SPEECH",
-                threshold="OFF"
-            ),
-            types.SafetySetting(
-                category="HARM_CATEGORY_DANGEROUS_CONTENT",
-                threshold="OFF"
-            ),
-            types.SafetySetting(
-                category="HARM_CATEGORY_SEXUALLY_EXPLICIT",
-                threshold="OFF"
-            ),
-            types.SafetySetting(
-                category="HARM_CATEGORY_HARASSMENT",
-                threshold="OFF"
-            )
-        ],
-        'tools': tools,
-    }
+    config = create_generate_config(temperature=1, top_p=1, seed=0, include_thinking=True)
     
-    # ThinkingConfigが利用可能な場合のみ追加
-    try:
-        # より詳細なチェックを実装
-        thinking_config_available = False
-        try:
-            # ThinkingConfigクラスが存在するかチェック
-            if hasattr(types, 'ThinkingConfig'):
-                # 実際にインスタンス化できるかテスト
-                test_config = types.ThinkingConfig(thinking_budget=-1)
-                thinking_config_available = True
-                print("DEBUG: ThinkingConfig is available")
-            else:
-                # 代替的なアプローチ: 直接インポートを試行
-                try:
-                    from google.genai.types import ThinkingConfig
-                    test_config = ThinkingConfig(thinking_budget=-1)
-                    thinking_config_available = True
-                    print("DEBUG: ThinkingConfig imported directly")
-                except ImportError:
-                    print("DEBUG: ThinkingConfig not available via direct import")
-        except (AttributeError, TypeError, ValueError) as e:
-            print(f"DEBUG: ThinkingConfig not available: {e}")
-            thinking_config_available = False
-        
-        if thinking_config_available:
-            config_params['thinking_config'] = types.ThinkingConfig(
-                thinking_budget=-1,
-            )
-            print("DEBUG: Added ThinkingConfig to config")
-        else:
-            print("DEBUG: Skipping ThinkingConfig - not available")
-    except Exception as e:
-        print(f"DEBUG: Error checking ThinkingConfig: {e}")
-        pass  # ThinkingConfigが利用できない場合は無視
-    
-    # 安全にGenerateContentConfigを作成
-    try:
-        generate_content_config = types.GenerateContentConfig(**config_params)
-        print("DEBUG: GenerateContentConfig created successfully")
-    except Exception as e:
-        print(f"DEBUG: Error creating GenerateContentConfig: {e}")
-        # ThinkingConfigを除外して再試行
-        if 'thinking_config' in config_params:
-            del config_params['thinking_config']
-            print("DEBUG: Retrying without ThinkingConfig")
-            generate_content_config = types.GenerateContentConfig(**config_params)
-
     full_response = ""
     grounding_metadata = None
-    
-    print(f"DEBUG: Starting generation for message: {user_message}")
     
     for chunk in client.models.generate_content_stream(
         model=GEMINI_MODEL,
         contents=contents,
-        config=generate_content_config,
+        config=config,
     ):
-        print(f"DEBUG: Raw chunk: {chunk}")
-        
         if not chunk.candidates or not chunk.candidates[0].content or not chunk.candidates[0].content.parts:
-            print("DEBUG: Skipping chunk - no content")
             continue
-        
-        print(f"DEBUG: Chunk type: {type(chunk)}")
-        print(f"DEBUG: Chunk attributes: {[attr for attr in dir(chunk) if not attr.startswith('_')]}")
         
         # テキストを蓄積
         full_response += chunk.text
-        print(f"DEBUG: Added text: {chunk.text[:100]}...")
         
-        # 全ての可能な場所でグラウンディングメタデータを探す
-        candidate = chunk.candidates[0]
-        print(f"DEBUG: Candidate attributes: {[attr for attr in dir(candidate) if not attr.startswith('_')]}")
-        
-        # 候補1: candidate.grounding_metadata
-        if hasattr(candidate, 'grounding_metadata'):
-            print(f"DEBUG: candidate.grounding_metadata exists: {candidate.grounding_metadata}")
-            if candidate.grounding_metadata:
-                print("DEBUG: Found grounding_metadata in candidate")
-                grounding_metadata = candidate.grounding_metadata
-        
-        # 候補2: chunk.grounding_metadata
-        if hasattr(chunk, 'grounding_metadata'):
-            print(f"DEBUG: chunk.grounding_metadata exists: {chunk.grounding_metadata}")
-            if chunk.grounding_metadata:
-                print("DEBUG: Found grounding_metadata in chunk")
-                grounding_metadata = chunk.grounding_metadata
-            
-        # 候補3: candidate.content.grounding_metadata
-        if hasattr(candidate.content, 'grounding_metadata'):
-            print(f"DEBUG: candidate.content.grounding_metadata exists: {candidate.content.grounding_metadata}")
-            if candidate.content.grounding_metadata:
-                print("DEBUG: Found grounding_metadata in candidate.content")
-                grounding_metadata = candidate.content.grounding_metadata
-        
-        # 候補4: 全体の構造を確認
-        print(f"DEBUG: Full candidate structure:")
-        for attr in dir(candidate):
-            if not attr.startswith('_'):
-                try:
-                    value = getattr(candidate, attr)
-                    print(f"  {attr}: {type(value)} - {value}")
-                except:
-                    print(f"  {attr}: <error accessing>")
+        # グラウンディングメタデータを取得
+        grounding_metadata = extract_grounding_metadata(chunk)
         
         yield {
             'chunk': chunk.text,
@@ -866,11 +805,8 @@ def generate_response(user_message):
             'grounding_metadata': None
         }
     
-    print(f"DEBUG: Final grounding_metadata: {grounding_metadata}")
-    
     # 最後に出典情報を送信（辞書形式に変換）
     converted_metadata = convert_grounding_metadata_to_dict(grounding_metadata)
-    print(f"DEBUG: Converted metadata: {converted_metadata}")
     
     yield {
         'chunk': '',
@@ -886,22 +822,10 @@ def index():
 
 @app.route('/health')
 def health():
-    """ヘルスチェックエンドポイント"""
-    import psutil
-    import gc
-    
-    # メモリ使用量を取得
-    process = psutil.Process()
-    memory_info = process.memory_info()
-    
-    # ガベージコレクションを実行
-    gc.collect()
-    
+    """軽量なヘルスチェックエンドポイント"""
     return jsonify({
         'status': 'healthy',
-        'memory_usage_mb': round(memory_info.rss / 1024 / 1024, 2),
-        'memory_percent': round(process.memory_percent(), 2),
-        'cpu_percent': round(process.cpu_percent(), 2)
+        'timestamp': datetime.now().isoformat()
     })
 
 @app.route('/chat', methods=['POST'])
@@ -911,6 +835,7 @@ def chat():
     data = request.json
     user_message = data.get('message', '')
     use_deep_mode = data.get('deep_mode', False)
+    generate_questions = data.get('generate_questions', False)
     
     if not user_message:
         return jsonify({'error': 'メッセージが空です'}), 400
@@ -919,25 +844,23 @@ def chat():
         try:
             if use_deep_mode:
                 # 深掘りモードを使用
-                for chunk_data in generate_deep_response(user_message):
+                for chunk_data in generate_deep_response(user_message, generate_questions):
                     yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
             else:
                 # 通常モードを使用
                 for chunk_data in generate_response(user_message):
                     yield f"data: {json.dumps(chunk_data, ensure_ascii=False)}\n\n"
             
-            # メモリクリーンアップ
-            gc.collect()
-            
         except Exception as e:
             print(f"Error in chat endpoint: {e}")
             error_data = {
-                'chunk': f'エラーが発生しました: {str(e)}',
+                'chunk': handle_rag_error(e, "chat endpoint"),
                 'done': True,
                 'grounding_metadata': None
             }
             yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
-            # エラー時もメモリクリーンアップ
+        finally:
+            # 正常・異常終了問わずメモリクリーンアップ
             gc.collect()
     
     return Response(generate(), mimetype='text/plain')
