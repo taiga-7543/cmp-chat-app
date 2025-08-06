@@ -63,7 +63,7 @@
             <header>
                 <div class="header-content">
                     <button class="menu-toggle" id="menuToggle">☰</button>
-                    <h1>CMP Chat App</h1>
+                    <h1>RAG Chat App</h1>
                     <p>Vertex AI RAGを使用したチャットアプリ</p>
                 </div>
             </header>
@@ -282,6 +282,20 @@
                     
                     <div class="settings-section">
                         <h3>RAG設定</h3>
+                        
+                        <!-- コーパス作成セクション -->
+                        <div class="setting-item">
+                            <label>新しいコーパスの作成:</label>
+                            <div class="corpus-creation">
+                                <input type="text" id="newCorpusName" placeholder="コーパス名を入力" style="flex: 1; margin-right: 10px;">
+                                <button id="createCorpusBtn" class="btn-primary">🆕 コーパス作成</button>
+                            </div>
+                            <small style="color: #666; margin-top: 5px; display: block;">
+                                新しいRAGコーパスを作成します。作成には数分かかる場合があります。
+                            </small>
+                        </div>
+                        
+                        <!-- コーパス選択セクション -->
                         <div class="setting-item">
                             <label>RAGコーパス選択:</label>
                             <div class="corpus-selector">
@@ -291,7 +305,13 @@
                                 <button id="loadCorporaBtn" class="btn-small">🔄 更新</button>
                                 <button id="applyCorporaBtn" class="btn-primary">適用</button>
                             </div>
+                            <!-- コーパス詳細情報表示 -->
+                            <div id="corpusDetails" style="margin-top: 10px; padding: 10px; background: #f8f9fa; border-radius: 4px; display: none;">
+                                <small><strong>詳細情報:</strong></small>
+                                <div id="corpusDetailContent" style="font-size: 12px; color: #666; margin-top: 5px;"></div>
+                            </div>
                         </div>
+                        
                         <div class="setting-item">
                             <label>または手動入力:</label>
                             <div class="corpus-manual-input">
@@ -299,7 +319,10 @@
                                        style="width: 100%; font-family: monospace; font-size: 12px;">
                                 <button id="applyManualCorpusBtn" class="btn-primary">手動設定</button>
                             </div>
+                            <!-- バリデーションメッセージ -->
+                            <div id="validationMessage" style="margin-top: 5px; font-size: 12px; display: none;"></div>
                         </div>
+                        
                         <div class="setting-item">
                             <label>現在のRAGコーパスID:</label>
                             <input type="text" id="ragCorpusId" readonly value="読み込み中...">
@@ -815,8 +838,8 @@
             const manualCorpusIdInput = document.getElementById('manualCorpusId');
             const selectedCorpusId = selectElement.value || manualCorpusIdInput.value.trim();
             
-            if (!selectedCorpusId) {
-                alert('コーパスを選択または手動入力してください。');
+            // バリデーション実行
+            if (!validateCorpusId(selectedCorpusId)) {
                 return;
             }
             
@@ -838,22 +861,141 @@
                 .then(response => response.json())
                 .then(data => {
                     if (data.success) {
-                        alert(data.message);
+                        showValidationMessage('✅ ' + data.message, 'success');
                         // 設定を再読み込み
                         loadSettings();
                         loadRagCorpora();
                     } else {
-                        alert(`コーパス変更に失敗しました: ${data.error}`);
+                        showValidationMessage('❌ コーパス変更に失敗しました: ' + data.error, 'error');
                     }
                 })
                 .catch(error => {
                     console.error('RAGコーパス変更エラー:', error);
-                    alert('コーパス変更中にエラーが発生しました。');
+                    showValidationMessage('❌ コーパス変更中にエラーが発生しました', 'error');
                 })
                 .finally(() => {
                     applyBtn.disabled = false;
                     applyBtn.textContent = originalText;
                 });
+            }
+        }
+
+        // 新しいRAGコーパスを作成
+        function createRagCorpus() {
+            const corpusNameInput = document.getElementById('newCorpusName');
+            const corpusName = corpusNameInput.value.trim();
+            
+            if (!corpusName) {
+                showValidationMessage('❌ コーパス名を入力してください', 'error');
+                corpusNameInput.focus();
+                return;
+            }
+            
+            if (corpusName.length < 3) {
+                showValidationMessage('❌ コーパス名は3文字以上で入力してください', 'error');
+                corpusNameInput.focus();
+                return;
+            }
+            
+            if (confirm(`新しいRAGコーパス「${corpusName}」を作成しますか？\n作成には数分かかる場合があります。`)) {
+                const createBtn = document.getElementById('createCorpusBtn');
+                const originalText = createBtn.textContent;
+                createBtn.disabled = true;
+                createBtn.textContent = '作成中...';
+                
+                fetch('/create_rag_corpus', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        corpus_name: corpusName
+                    })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        showValidationMessage('✅ コーパスが正常に作成されました: ' + data.corpus_id, 'success');
+                        corpusNameInput.value = '';
+                        // コーパス一覧を更新
+                        loadRagCorpora();
+                    } else {
+                        showValidationMessage('❌ コーパス作成に失敗しました: ' + data.error, 'error');
+                    }
+                })
+                .catch(error => {
+                    console.error('RAGコーパス作成エラー:', error);
+                    showValidationMessage('❌ コーパス作成中にエラーが発生しました', 'error');
+                })
+                .finally(() => {
+                    createBtn.disabled = false;
+                    createBtn.textContent = originalText;
+                });
+            }
+        }
+
+        // コーパスIDのバリデーション
+        function validateCorpusId(corpusId) {
+            const validationElement = document.getElementById('validationMessage');
+            
+            if (!corpusId) {
+                showValidationMessage('❌ コーパスを選択または手動入力してください', 'error');
+                return false;
+            }
+            
+            // RAGコーパスIDの形式チェック
+            const corpusIdPattern = /^projects\/[^\/]+\/locations\/[^\/]+\/ragCorpora\/[a-zA-Z0-9_-]+$/;
+            
+            if (!corpusIdPattern.test(corpusId)) {
+                showValidationMessage('⚠️ コーパスIDの形式が正しくありません。正しい形式: projects/PROJECT_ID/locations/LOCATION/ragCorpora/CORPUS_ID', 'warning');
+                return false;
+            }
+            
+            showValidationMessage('✅ コーパスIDの形式は正しいです', 'success');
+            return true;
+        }
+
+        // バリデーションメッセージの表示
+        function showValidationMessage(message, type) {
+            const validationElement = document.getElementById('validationMessage');
+            validationElement.textContent = message;
+            validationElement.className = `validation-${type}`;
+            validationElement.style.display = 'block';
+            
+            // 成功メッセージは3秒後に自動で消去
+            if (type === 'success') {
+                setTimeout(() => {
+                    validationElement.style.display = 'none';
+                }, 3000);
+            }
+        }
+
+        // コーパス詳細情報の表示
+        function showCorpusDetails(corpusId) {
+            const detailsElement = document.getElementById('corpusDetails');
+            const contentElement = document.getElementById('corpusDetailContent');
+            
+            if (!corpusId) {
+                detailsElement.style.display = 'none';
+                return;
+            }
+            
+            // コーパスIDから詳細情報を抽出
+            const parts = corpusId.split('/');
+            if (parts.length >= 6) {
+                const projectId = parts[1];
+                const location = parts[3];
+                const actualCorpusId = parts[5];
+                
+                contentElement.innerHTML = `
+                    <div class="corpus-detail-item"><strong>プロジェクトID:</strong> ${projectId}</div>
+                    <div class="corpus-detail-item"><strong>ロケーション:</strong> ${location}</div>
+                    <div class="corpus-detail-item"><strong>コーパスID:</strong> ${actualCorpusId}</div>
+                    <div class="corpus-detail-item"><strong>フルパス:</strong> ${corpusId}</div>
+                `;
+                detailsElement.style.display = 'block';
+            } else {
+                detailsElement.style.display = 'none';
             }
         }
 
@@ -870,6 +1012,48 @@
             document.getElementById('loadCorporaBtn').addEventListener('click', loadRagCorpora);
             document.getElementById('applyCorporaBtn').addEventListener('click', applyRagCorpus);
             document.getElementById('applyManualCorpusBtn').addEventListener('click', applyRagCorpus); // 手動入力ボタンも同じイベントリスナーに
+            document.getElementById('createCorpusBtn').addEventListener('click', createRagCorpus); // コーパス作成ボタンも同じイベントリスナーに
+            
+            // コーパス選択時の詳細表示
+            document.getElementById('ragCorpusSelect').addEventListener('change', function() {
+                const selectedCorpusId = this.value;
+                showCorpusDetails(selectedCorpusId);
+                
+                // 手動入力をクリア
+                document.getElementById('manualCorpusId').value = '';
+                document.getElementById('validationMessage').style.display = 'none';
+            });
+            
+            // 手動入力時のリアルタイムバリデーション
+            document.getElementById('manualCorpusId').addEventListener('input', function() {
+                const corpusId = this.value.trim();
+                
+                // ドロップダウンの選択をクリア
+                document.getElementById('ragCorpusSelect').value = '';
+                document.getElementById('corpusDetails').style.display = 'none';
+                
+                // リアルタイムバリデーション
+                if (corpusId) {
+                    setTimeout(() => {
+                        validateCorpusId(corpusId);
+                        showCorpusDetails(corpusId);
+                    }, 500); // 入力停止から0.5秒後にバリデーション実行
+                } else {
+                    document.getElementById('validationMessage').style.display = 'none';
+                }
+            });
+            
+            // 新しいコーパス名の入力チェック
+            document.getElementById('newCorpusName').addEventListener('input', function() {
+                const corpusName = this.value.trim();
+                const createBtn = document.getElementById('createCorpusBtn');
+                
+                if (corpusName.length >= 3) {
+                    createBtn.disabled = false;
+                } else {
+                    createBtn.disabled = true;
+                }
+            });
             
             // 設定画面を開いたときにRAGコーパス一覧も読み込み
             const originalLoadSettings = loadSettings;
